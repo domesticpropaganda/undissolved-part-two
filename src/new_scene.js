@@ -75,7 +75,16 @@ export class Scene {
     // Create points geometry from mesh positions
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(this._meshPositions, 3));
-    const material = new THREE.PointsMaterial({ size: 0.05, color: 0xffffff });
+    // Add color attribute for RGBA (for depth of field alpha)
+    const colors = new Float32Array(this._meshPositions.length / 3 * 4);
+    for (let i = 0; i < this._meshPositions.length / 3; i++) {
+      colors[i * 4 + 0] = 1.0; // r
+      colors[i * 4 + 1] = 1.0; // g
+      colors[i * 4 + 2] = 1.0; // b
+      colors[i * 4 + 3] = 1.0; // a (will be updated per frame)
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
+    const material = new THREE.PointsMaterial({ size: 0.05, vertexColors: true, transparent: true });
     this.points = new THREE.Points(geometry, material);
     this.scene.add(this.points);
   }
@@ -133,8 +142,8 @@ export class Scene {
     // Scene and camera setup
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-    this.camera.position.z = 1.5; // Much closer on start
-    this._baseCameraZ = 1.5; // Save for later reference
+    this.camera.position.z = 2; // Much closer on start
+    this._baseCameraZ = 2; // Save for later reference
     this.camera.lookAt(0, 0, 0);
 
     // Debug helpers (uncomment for debugging)
@@ -202,7 +211,16 @@ export class Scene {
     // Create new points geometry from mesh positions
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(this._meshPositions, 3));
-    const material = new THREE.PointsMaterial({ size: 0.05, color: 0xffffff });
+    // Add color attribute for RGBA (for depth of field alpha)
+    const colors = new Float32Array(this._meshPositions.length / 3 * 4);
+    for (let i = 0; i < this._meshPositions.length / 3; i++) {
+      colors[i * 4 + 0] = 1.0;
+      colors[i * 4 + 1] = 1.0;
+      colors[i * 4 + 2] = 1.0;
+      colors[i * 4 + 3] = 1.0;
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
+    const material = new THREE.PointsMaterial({ size: 0.05, vertexColors: true, transparent: true });
     this.points = new THREE.Points(geometry, material);
     this.scene.add(this.points);
     // Animate mesh points to cloud positions
@@ -273,7 +291,24 @@ export class Scene {
     // this.camera.position.z is set by animation/zoom logic
     this.camera.lookAt(0, 0, 0);
 
-    // ...existing code...
+    // Depth of field: fade distant particles (if points exist)
+    if (this.points) {
+      const positions = this.points.geometry.attributes.position;
+      const colors = this.points.geometry.attributes.color;
+      for (let i = 0; i < positions.count; i++) {
+        const px = positions.getX(i);
+        const py = positions.getY(i);
+        const pz = positions.getZ(i);
+        const dx = px - this.camera.position.x;
+        const dy = py - this.camera.position.y;
+        const dz = pz - this.camera.position.z;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        // You can tweak the numbers below for different focus/falloff
+        const alpha = THREE.MathUtils.clamp(1.5 - dist * 0.25, 0.2, 1.0);
+        colors.setW(i, alpha);
+      }
+      colors.needsUpdate = true;
+    }
 
     // Rotate the cube if it exists
     if (this.cube) {
@@ -288,9 +323,24 @@ export class Scene {
     requestAnimationFrame(() => this.animate());
   }
 
-  // Call this to enable/disable particle orbits
-  setParticleOrbitActive(active) {
-    // No-op: orbit motion removed
+  // Call this to enable/disable shared orbit for detached particles
+  setParticleOrbitActive(detachIndices, orbitLevel = 0) {
+    // detachIndices: Set of indices of detached particles
+    // orbitLevel: timeline step (0-based)
+    if (!detachIndices || detachIndices.size === 0) {
+      this._orbitSharedBase = null;
+      this._orbitDetachedIndices = null;
+      this._orbitLevel = 0;
+      return;
+    }
+    // Store base positions for detached particles
+    const positions = this.points.geometry.attributes.position;
+    this._orbitSharedBase = {};
+    this._orbitDetachedIndices = new Set(detachIndices);
+    this._orbitLevel = orbitLevel;
+    for (let i of detachIndices) {
+      this._orbitSharedBase[i] = [positions.getX(i), positions.getY(i), positions.getZ(i)];
+    }
   }
 
   setupIntroOverlay() {
@@ -579,21 +629,53 @@ export class Scene {
     }
     // Handle return to intro overlay state
     if (level === -1) {
-      // Animate all points back to initial cloud
+      // Animate all points back to mesh (particles form the human shape)
       const positions = this.points.geometry.attributes.position;
       const start = [];
       for (let i = 0; i < positions.count; i++) {
         start.push(positions.getX(i), positions.getY(i), positions.getZ(i));
       }
-      const end = this._cloudPositions.slice();
+      const end = this._meshPositions.slice();
+      // Animate both points and camera z back to initial value
+      const cameraStartZ = this.camera.position.z;
+      const cameraEndZ = (typeof this._baseCameraZ === 'number') ? this._baseCameraZ : 2;
+      const duration = 1200;
+      const startTime = performance.now();
       await new Promise(resolve => {
-        this.animateMorph(start, end, positions, resolve);
+        const animate = () => {
+          const elapsed = performance.now() - startTime;
+          const t = Math.min(elapsed / duration, 1);
+          for (let i = 0; i < positions.count; i++) {
+            const idx = i * 3;
+            positions.setXYZ(
+              i,
+              start[idx] + (end[idx] - start[idx]) * t,
+              start[idx + 1] + (end[idx + 1] - start[idx + 1]) * t,
+              start[idx + 2] + (end[idx + 2] - start[idx + 2]) * t
+            );
+          }
+          positions.needsUpdate = true;
+          if (this.camera) {
+            this.camera.position.z = cameraStartZ + (cameraEndZ - cameraStartZ) * t;
+            this.camera.updateProjectionMatrix();
+          }
+          if (t < 1) {
+            requestAnimationFrame(animate);
+          } else {
+            if (this.camera) {
+              this.camera.position.z = cameraEndZ;
+              this.camera.updateProjectionMatrix();
+            }
+            resolve();
+          }
+        };
+        animate();
       });
-    // Fade out timeline overlay
-    if (timelineOverlay) {
-      timelineOverlay.style.transition = 'opacity 0.7s';
-      timelineOverlay.style.opacity = '0';
-    }
+      // Fade out timeline overlay
+      if (timelineOverlay) {
+        timelineOverlay.style.transition = 'opacity 0.7s';
+        timelineOverlay.style.opacity = '0';
+      }
       // Fade in intro overlay
       const intro = document.getElementById('intro-overlay');
       if (intro) {
@@ -708,24 +790,45 @@ export class Scene {
       }
     }
     // Detachment scale: level 0 = 1, level 1 = 2, level 2 = 3, level 3+ = 4
-    let detachmentScale = Math.min(currentStep + 1, 4);
+    let detachmentScale = Math.min(currentStep + 1, 3);
+    // Precompute random spherical targets for all possible detachment levels for determinism
+    if (!this._sphericalDetachTargets) this._sphericalDetachTargets = {};
+    if (!this._sphericalDetachTargets[currentStep]) {
+      this._sphericalDetachTargets[currentStep] = [];
+      for (let i = 0; i < count; i++) {
+        const randomFactor = 1 + (Math.random() - 0.5) * 0.2;
+        const r = detachmentScale * randomFactor;
+        const u = Math.random();
+        const v = Math.random();
+        const theta = 2 * Math.PI * u;
+        const phi = Math.acos(2 * v - 1);
+        const sx = r * Math.sin(phi) * Math.cos(theta);
+        const sy = r * Math.sin(phi) * Math.sin(theta);
+        const sz = r * Math.cos(phi);
+        this._sphericalDetachTargets[currentStep][i] = [sx, sy, sz];
+      }
+    }
     for (let i = 0; i < count; i++) {
-      // Start: detached if in prev, else mesh
       let x = positions.getX(i), y = positions.getY(i), z = positions.getZ(i);
-      startPositions.push(x, y, z);
-      // End: detached if in next, else mesh
       let meshX = this._meshPositions[i*3], meshY = this._meshPositions[i*3+1], meshZ = this._meshPositions[i*3+2];
-      if (detachIndicesNext.has(i)) {
-        // All detached particles for this step use the same scale
-        const randomFactor = 1 + (Math.random() - 0.5) * 0.2; // 0.9 to 1.1
-        const len = Math.sqrt(meshX*meshX + meshY*meshY + meshZ*meshZ) || 1;
-        endPositions.push(
-          meshX + (meshX/len)*detachmentScale*randomFactor,
-          meshY + (meshY/len)*detachmentScale*randomFactor,
-          meshZ + (meshZ/len)*detachmentScale*randomFactor
-        );
+      // Only animate if detachment state changes
+      const wasDetached = detachIndicesPrev.has(i);
+      const willBeDetached = detachIndicesNext.has(i);
+      if (wasDetached !== willBeDetached) {
+        // Animate from current to target
+        startPositions.push(x, y, z);
+        if (willBeDetached) {
+          // Animate to spherical detachment
+          const [sx, sy, sz] = this._sphericalDetachTargets[currentStep][i];
+          endPositions.push(sx, sy, sz);
+        } else {
+          // Animate to mesh
+          endPositions.push(meshX, meshY, meshZ);
+        }
       } else {
-        endPositions.push(meshX, meshY, meshZ);
+        // Keep static: set both start and end to current position
+        startPositions.push(x, y, z);
+        endPositions.push(x, y, z);
       }
     }
     // Animate detachment/reattachment and camera zoom
@@ -738,8 +841,6 @@ export class Scene {
     const startZ = minZ + (maxZ - minZ) * startPercent;
     const endZ = minZ + (maxZ - minZ) * endPercent;
     const startTime = performance.now();
-    // Disable orbits during morph
-    this.setParticleOrbitActive(false);
     await new Promise(resolve => {
       const animate = () => {
         const elapsed = performance.now() - startTime;
@@ -766,10 +867,6 @@ export class Scene {
       };
       animate();
     });
-    // Enable orbits if at a timeline step (not intro or morphing)
-    if (endPercent > 0) {
-      this.setParticleOrbitActive(true);
-    }
   }
 
   updateTimelineOverlay(level) {
@@ -783,7 +880,7 @@ export class Scene {
     // Map data to expected fields for overlay
     window.updateTimelineOverlay({
       year: (data.year !== undefined ? data.year : (data.age !== undefined ? data.age : '')),
-      contaminationRate: (typeof data.items_consumed === 'number' && this.totalItems ? data.items_consumed / this.totalItems : 0),
+      contaminationRate: (typeof data.items_consumed === 'number' ? data.items_consumed : 0),
       description: (data.label !== undefined && data.label !== '' ? data.label : (data.description !== undefined ? data.description : '')),
       show: true,
       step: level + 1,

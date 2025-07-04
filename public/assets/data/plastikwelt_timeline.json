@@ -1,26 +1,27 @@
 [
   {
-    "level": 0,
     "age": 20,
     "items_consumed": 150,
-    "description": "Childhood and teenage basics — mostly t-shirts, jeans, hoodies, sneakers, and schoolwear essentials."
+    "description": "Early life essentials: basic school uniforms, casualwear, and shoes accumulated across childhood and teenage years. Mostly practical and worn long-term."
   },
   {
-    "level": 1,
     "age": 30,
     "items_consumed": 400,
-    "description": "Early adulthood wardrobe — workwear, fast fashion, occasional formalwear, seasonal shoes, and accessories like bags and belts."
+    "description": "Adulthood begins: wardrobe expands with workwear, socialwear, seasonal pieces, and trend-driven purchases. Fast fashion enters regular rotation."
   },
   {
-    "level": 2,
     "age": 40,
     "items_consumed": 700,
-    "description": "Midlife accumulation — trend-driven purchases, duplicates of similar items, gifts, and lifestyle-specific garments (sportswear, travel gear)."
+    "description": "Lifestyle diversification: items pile up for work, leisure, sports, events, and parenting. Duplicates, gifts, and rarely worn pieces increase."
   },
   {
-    "level": 3,
     "age": 50,
     "items_consumed": 1000,
-    "description": "Peak volume — high rotation of clothing, formalwear for events, outerwear layers, multiple pairs of shoes and branded items."
+    "description": "Peak accumulation: decades of buying, seasonal refreshes, and special-purpose items result in a wardrobe much larger than daily needs."
+  },
+  {
+    "age": 65,
+    "items_consumed": 1200,
+    "description": "Slowed purchasing, but lifetime accumulation includes stored, forgotten, and unworn garments. The total footprint reflects a full consumption arc."
   }
 ]

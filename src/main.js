@@ -268,7 +268,12 @@ window.updateTimelineOverlay = function({ year, event, species, contaminationRat
   const speciesEl = document.querySelector('.overlay-species');
   const footer = document.querySelector('.overlay-footer');
   const stepBars = document.querySelector('.overlay-step-bars');
-  if (!header || !yearEl || !stat || !statMain || !statSublabel || !footer || !speciesEl || !stepBars) return;
+  // Accept items_consumed as a raw value (for backward compatibility, fallback to contaminationRate)
+  let itemsConsumed = typeof contaminationRate === 'number' && contaminationRate > 0 && contaminationRate < 1e6 ? contaminationRate : 0;
+  if (typeof event === 'number' && event > 0) itemsConsumed = event;
+  if (typeof window._lastItemsConsumed === 'undefined') window._lastItemsConsumed = 0;
+  // If contaminationRate is a percent (0-1), but items_consumed is passed as event, prefer event
+  if (typeof contaminationRate === 'number' && contaminationRate > 10) itemsConsumed = contaminationRate;
   // Header/footer always visible (no longer set by JS)
   // Show/hide stat+year block
   if (!show) {
@@ -281,7 +286,9 @@ window.updateTimelineOverlay = function({ year, event, species, contaminationRat
   }
   // Set content
   yearEl.textContent = year;
-  statMain.textContent = Math.round(contaminationRate * 100) + '%';
+  // Animate statMain as a plain number (count up)
+  let targetValue = itemsConsumed;
+  statMain.textContent = '0';
   // speciesEl.textContent = species || ''; // Removed: do not show species
   // Step bars
   if (typeof step === 'number' && typeof totalSteps === 'number') {
@@ -301,40 +308,38 @@ window.updateTimelineOverlay = function({ year, event, species, contaminationRat
   } else {
     statSublabel.textContent = desc;
   }
-  // Animate stat+year block in order: year, contam rate, description
+  // Animate stat+year block in order: year, items consumed, description
   yearEl.style.opacity = 0;
   statMain.style.opacity = 0;
   statSublabel.style.opacity = 0;
   statSublabel.style.display = 'none';
   stat.style.opacity = 1; // container always visible for layout
-  statMain.textContent = '00%'; // Reset stat to 00% before anim
-  // speciesEl.style.opacity = 0; // Removed: do not show species
+  statMain.textContent = '0'; // Reset stat to 0 before anim
   // Cancel any ongoing typewriter animation
   window.resetTypewriterAnimation();
   setTimeout(() => {
     yearEl.style.transition = 'opacity 0.5s';
     yearEl.style.opacity = 1;
-     setTimeout(() => window.playClickSound(), 80); // 80ms delay before sound
+    setTimeout(() => window.playClickSound(), 80); // 80ms delay before sound
     setTimeout(() => {
       statMain.style.transition = 'opacity 0.5s';
       statMain.style.opacity = 1;
       // Play click sound at start of stat-main animation
       if (window.playClickSound) window.playClickSound();
-      // Start contamination percentage animation (no fade)
-      let targetPercent = Math.round((contaminationRate || 0) * 100);
+      // Start items consumed count up animation (no percent)
       let animStart = null;
       let animDuration = 1200;
-      function animatePercent(ts) {
+      function animateCount(ts) {
         if (!animStart) animStart = ts;
         let elapsed = ts - animStart;
         let progress = Math.min(1, elapsed / animDuration);
-        let val = Math.round(targetPercent * progress);
-        statMain.textContent = (val < 10 ? '0' : '') + val + '%';
+        let val = Math.round(targetValue * progress);
+        statMain.textContent = val.toLocaleString();
         if (progress < 1) {
-          requestAnimationFrame(animatePercent);
+          requestAnimationFrame(animateCount);
         } else {
-          statMain.textContent = (targetPercent < 10 ? '0' : '') + targetPercent + '%';
-          // Typewriter effect for sublabel after percent animation
+          statMain.textContent = targetValue.toLocaleString();
+          // Typewriter effect for sublabel after number animation
           statSublabel.style.transition = '';
           statSublabel.style.display = 'block';
           statSublabel.style.opacity = 1;
@@ -376,7 +381,7 @@ window.updateTimelineOverlay = function({ year, event, species, contaminationRat
           typeWriter();
         }
       }
-      requestAnimationFrame(animatePercent);
+      requestAnimationFrame(animateCount);
     }, 400);
   }, 200);
 };
