@@ -273,6 +273,8 @@ export class Scene {
     // this.camera.position.z is set by animation/zoom logic
     this.camera.lookAt(0, 0, 0);
 
+    // ...existing code...
+
     // Rotate the cube if it exists
     if (this.cube) {
       this.cube.rotation.x += 0.01;
@@ -284,6 +286,11 @@ export class Scene {
 
     // Request the next frame
     requestAnimationFrame(() => this.animate());
+  }
+
+  // Call this to enable/disable particle orbits
+  setParticleOrbitActive(active) {
+    // No-op: orbit motion removed
   }
 
   setupIntroOverlay() {
@@ -685,9 +692,23 @@ export class Scene {
     const detachCountNext = Math.floor(count * nextPercent);
     const detachIndicesPrev = new Set(this._detachmentIndices.slice(0, detachCountPrev));
     const detachIndicesNext = new Set(this._detachmentIndices.slice(0, detachCountNext));
-    // For each point, animate from prev to next detached state
     const startPositions = [];
     const endPositions = [];
+    // Determine the current timeline step (level) for detachment scale
+    let currentStep = 0;
+    if (this.timeline && this.timeline.length > 0 && typeof nextPercent === 'number') {
+      // Find the closest timeline step for nextPercent
+      let minDiff = 1;
+      for (let i = 0; i < this.timeline.length; i++) {
+        const stepPercent = this.timeline[i].items_consumed / this.totalItems;
+        if (Math.abs(stepPercent - nextPercent) < minDiff) {
+          minDiff = Math.abs(stepPercent - nextPercent);
+          currentStep = i;
+        }
+      }
+    }
+    // Detachment scale: level 0 = 1, level 1 = 2, level 2 = 3, level 3+ = 4
+    let detachmentScale = Math.min(currentStep + 1, 4);
     for (let i = 0; i < count; i++) {
       // Start: detached if in prev, else mesh
       let x = positions.getX(i), y = positions.getY(i), z = positions.getZ(i);
@@ -695,10 +716,14 @@ export class Scene {
       // End: detached if in next, else mesh
       let meshX = this._meshPositions[i*3], meshY = this._meshPositions[i*3+1], meshZ = this._meshPositions[i*3+2];
       if (detachIndicesNext.has(i)) {
-        // Move outward from mesh
+        // All detached particles for this step use the same scale
+        const randomFactor = 1 + (Math.random() - 0.5) * 0.2; // 0.9 to 1.1
         const len = Math.sqrt(meshX*meshX + meshY*meshY + meshZ*meshZ) || 1;
-        const scale = 2.5;
-        endPositions.push(meshX + (meshX/len)*scale, meshY + (meshY/len)*scale, meshZ + (meshZ/len)*scale);
+        endPositions.push(
+          meshX + (meshX/len)*detachmentScale*randomFactor,
+          meshY + (meshY/len)*detachmentScale*randomFactor,
+          meshZ + (meshZ/len)*detachmentScale*randomFactor
+        );
       } else {
         endPositions.push(meshX, meshY, meshZ);
       }
@@ -713,6 +738,8 @@ export class Scene {
     const startZ = minZ + (maxZ - minZ) * startPercent;
     const endZ = minZ + (maxZ - minZ) * endPercent;
     const startTime = performance.now();
+    // Disable orbits during morph
+    this.setParticleOrbitActive(false);
     await new Promise(resolve => {
       const animate = () => {
         const elapsed = performance.now() - startTime;
@@ -739,6 +766,10 @@ export class Scene {
       };
       animate();
     });
+    // Enable orbits if at a timeline step (not intro or morphing)
+    if (endPercent > 0) {
+      this.setParticleOrbitActive(true);
+    }
   }
 
   updateTimelineOverlay(level) {
