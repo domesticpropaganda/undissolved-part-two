@@ -287,57 +287,65 @@ export class Scene {
   }
 
   setupIntroOverlay() {
+    this._introDone = false;
+    // Bind the shared handler once
+    this._handleFadeOutIntro = this._handleFadeOutIntro?.bind(this) || this.handleFadeOutIntro.bind(this);
     const introOverlay = document.getElementById('intro-overlay');
-    // Only allow one scroll to trigger the intro-to-level0 transition
-    let introDone = false;
-    const fadeOutIntro = async () => {
-      if (this.isAnimating || this._swipeLocked || introDone) return;
-      this.isAnimating = true;
-      this._swipeLocked = true;
-      introDone = true;
-      if (introOverlay && !introOverlay.style.opacity) {
-        introOverlay.style.transition = 'opacity 0.7s';
-        introOverlay.style.opacity = '0';
-        setTimeout(() => {
-          introOverlay.style.display = 'none';
-        }, 700);
-      }
-      // Remove listeners after first use
-      window.removeEventListener('scroll', fadeOutIntro);
-      window.removeEventListener('wheel', fadeOutIntro);
+    if (introOverlay) {
+      window.addEventListener('scroll', this._handleFadeOutIntro, { once: true });
+      window.addEventListener('wheel', this._handleFadeOutIntro, { once: true });
+    } else {
+      window.addEventListener('scroll', this._handleFadeOutIntro, { once: true });
+      window.addEventListener('wheel', this._handleFadeOutIntro, { once: true });
+    }
+  }
+
+  async handleFadeOutIntro(e) {
+    const introOverlay = document.getElementById('intro-overlay');
+    // Only allow scroll down (wheel/touch/scroll) to trigger, ignore scroll up
+    if (this.isAnimating || this._swipeLocked || this._introDone) return;
+    // If event is wheel, only allow deltaY > 0 (scroll down)
+    if (e && e.type === 'wheel' && e.deltaY <= 0) return;
+    // If event is scroll, allow (since scroll event doesn't have direction, but only fires on scroll down in this context)
+    // If event is undefined (programmatic), allow
+    this.isAnimating = true;
+    this._swipeLocked = true;
+    this._introDone = true;
+    if (introOverlay && introOverlay.style.display !== 'none') {
+      introOverlay.style.transition = 'opacity 0.7s';
+      introOverlay.style.opacity = '0';
+      setTimeout(() => {
+        introOverlay.style.display = 'none';
+      }, 700);
       // Wait for fade out
       await new Promise(res => setTimeout(res, 700));
-      // Animate level 0: particles detach from human and move out
-      // Ensure detachment indices are initialized (normally done in gotoTimelineStep)
-      if (!this._detachmentIndices && this.points) {
-        const count = this.points.geometry.attributes.position.count;
-        this._detachmentIndices = Array.from({length: count}, (_, i) => i);
-        for (let i = this._detachmentIndices.length - 1; i > 0; i--) {
-          const j = Math.floor(i * 1337 % (i + 1));
-          [this._detachmentIndices[i], this._detachmentIndices[j]] = [this._detachmentIndices[j], this._detachmentIndices[i]];
-        }
-      }
-      await this.animateDetachAndZoomDeterministic(0, this.timeline.length > 0 ? (this.timeline[0].items_consumed / this.totalItems) : 0);
-      this.currentLevel = 0;
-      this.updateTimelineOverlay(0);
-      // Fade in overlay for level 0
-      const overlay = document.getElementById('timeline-overlay');
-      if (overlay) {
-        overlay.style.transition = 'opacity 0.7s';
-        overlay.style.opacity = '1';
-      }
-      // Now unlock navigation for further timeline steps
-      this.isAnimating = false;
-      this._swipeLocked = false;
-      this._introFaded = true;
-    };
-    if (introOverlay) {
-      window.addEventListener('scroll', fadeOutIntro, { once: true });
-      window.addEventListener('wheel', fadeOutIntro, { once: true });
-    } else {
-      window.addEventListener('scroll', fadeOutIntro, { once: true });
-      window.addEventListener('wheel', fadeOutIntro, { once: true });
     }
+    // Remove listeners after first use
+    window.removeEventListener('scroll', this._handleFadeOutIntro);
+    window.removeEventListener('wheel', this._handleFadeOutIntro);
+    // Animate level 0: particles detach from human and move out
+    // Ensure detachment indices are initialized (normally done in gotoTimelineStep)
+    if (!this._detachmentIndices && this.points) {
+      const count = this.points.geometry.attributes.position.count;
+      this._detachmentIndices = Array.from({length: count}, (_, i) => i);
+      for (let i = this._detachmentIndices.length - 1; i > 0; i--) {
+        const j = Math.floor(i * 1337 % (i + 1));
+        [this._detachmentIndices[i], this._detachmentIndices[j]] = [this._detachmentIndices[j], this._detachmentIndices[i]];
+      }
+    }
+    await this.animateDetachAndZoomDeterministic(0, this.timeline.length > 0 ? (this.timeline[0].items_consumed / this.totalItems) : 0);
+    this.currentLevel = 0;
+    this.updateTimelineOverlay(0);
+    // Fade in overlay for level 0
+    const overlay = document.getElementById('timeline-overlay');
+    if (overlay) {
+      overlay.style.transition = 'opacity 0.7s';
+      overlay.style.opacity = '1';
+    }
+    // Now unlock navigation for further timeline steps
+    this.isAnimating = false;
+    this._swipeLocked = false;
+    this._introFaded = true;
   }
   // Morph mesh points to cloud for intro (blocking, returns promise)
   async morphMeshToCloudIntro() {
@@ -586,45 +594,10 @@ export class Scene {
         void intro.offsetWidth;
         intro.style.transition = 'opacity 0.7s';
         intro.style.opacity = '1';
-        // Re-attach scroll/wheel listeners for intro overlay
-        // Use the correct morph function (should be morphMeshToCloudIntro, not morphCloudToMeshIntro)
-        const fadeOutIntro = async () => {
-          if (this.isAnimating || this._swipeLocked) return;
-          this.isAnimating = true;
-          this._swipeLocked = true;
-          intro.style.transition = 'opacity 0.7s';
-          intro.style.opacity = '0';
-          setTimeout(() => {
-            intro.style.display = 'none';
-          }, 700);
-          window.removeEventListener('scroll', fadeOutIntro);
-          window.removeEventListener('wheel', fadeOutIntro);
-          await new Promise(res => setTimeout(res, 700));
-          // Animate level 0: particles detach from human and move out
-          // Ensure detachment indices are initialized (normally done in gotoTimelineStep)
-          if (!this._detachmentIndices && this.points) {
-            const count = this.points.geometry.attributes.position.count;
-            this._detachmentIndices = Array.from({length: count}, (_, i) => i);
-            for (let i = this._detachmentIndices.length - 1; i > 0; i--) {
-              const j = Math.floor(i * 1337 % (i + 1));
-              [this._detachmentIndices[i], this._detachmentIndices[j]] = [this._detachmentIndices[j], this._detachmentIndices[i]];
-            }
-          }
-          await this.animateDetachAndZoomDeterministic(0, this.timeline.length > 0 ? (this.timeline[0].items_consumed / this.totalItems) : 0);
-          this.currentLevel = 0;
-          this.updateTimelineOverlay(0);
-          // Fade in overlay for level 0
-          const overlay = document.getElementById('timeline-overlay');
-          if (overlay) {
-            overlay.style.transition = 'opacity 0.7s';
-            overlay.style.opacity = '1';
-          }
-          this.isAnimating = false;
-          this._swipeLocked = false;
-          this._introFaded = true;
-        };
-        window.addEventListener('scroll', fadeOutIntro, { once: true });
-        window.addEventListener('wheel', fadeOutIntro, { once: true });
+        // Re-attach scroll/wheel listeners for intro overlay using the shared handler
+        this._introDone = false;
+        window.addEventListener('scroll', this._handleFadeOutIntro, { once: true });
+        window.addEventListener('wheel', this._handleFadeOutIntro, { once: true });
       }
       this.currentLevel = -1;
       // Lock navigation until user scrolls forward again
