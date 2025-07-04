@@ -133,7 +133,8 @@ export class Scene {
     // Scene and camera setup
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-    this.camera.position.z = 5;
+    this.camera.position.z = 1.5; // Much closer on start
+    this._baseCameraZ = 1.5; // Save for later reference
     this.camera.lookAt(0, 0, 0);
 
     // Debug helpers (uncomment for debugging)
@@ -266,13 +267,10 @@ export class Scene {
   }
 
   animate() {
-    // Orbit the camera around the center
-    const radius = 5;
-    const speed = 0.003; // radians per frame
-    if (!this._orbitAngle) this._orbitAngle = 0;
-    this._orbitAngle += speed;
-    this.camera.position.x = Math.sin(this._orbitAngle) * radius;
-    this.camera.position.z = Math.cos(this._orbitAngle) * radius;
+    // Camera stays fixed on z axis, only zooms in/out
+    this.camera.position.x = 0;
+    this.camera.position.y = 0;
+    // this.camera.position.z is set by animation/zoom logic
     this.camera.lookAt(0, 0, 0);
 
     // Rotate the cube if it exists
@@ -429,7 +427,13 @@ export class Scene {
     // --- OUTRO OVERLAY HANDLING ---
     const outro = document.getElementById('outro-overlay');
     if (level > this.timeline.length - 1) {
-      // Show outro overlay
+      // Show outro overlay and remove timeline overlay (let gotoTimelineStep handle all overlay logic on return)
+      const timelineOverlay = document.getElementById('timeline-overlay');
+      if (timelineOverlay) {
+        timelineOverlay.style.transition = 'opacity 0.7s';
+        timelineOverlay.style.opacity = '0';
+        setTimeout(() => { timelineOverlay.style.display = 'none'; }, 700);
+      }
       if (outro) {
         outro.style.display = 'block';
         setTimeout(() => { outro.style.opacity = '1'; }, 10);
@@ -450,6 +454,45 @@ export class Scene {
               outro.style.transition = 'opacity 0.7s';
               outro.style.opacity = '0';
               setTimeout(() => { outro.style.display = 'none'; }, 700);
+              // Restore timeline overlay and update to last step, but do NOT call gotoTimelineStep recursively
+              const timelineOverlay = document.getElementById('timeline-overlay');
+              if (timelineOverlay) {
+                timelineOverlay.style.display = '';
+                timelineOverlay.style.opacity = '1';
+                // Hide all children first
+                const yearEl = timelineOverlay.querySelector('.overlay-year');
+                const statMainEl = timelineOverlay.querySelector('.overlay-stat-main');
+                const statSublabelEl = timelineOverlay.querySelector('.overlay-stat-sublabel');
+                if (yearEl) { yearEl.style.opacity = 0; yearEl.style.display = ''; }
+                if (statMainEl) { statMainEl.style.opacity = 0; statMainEl.style.display = ''; }
+                if (statSublabelEl) { statSublabelEl.style.opacity = 0; statSublabelEl.style.display = 'none'; }
+                // Update overlay content
+                this.updateTimelineOverlay(this.timeline.length - 1);
+                // Start child fade-in after overlay fade-in completes (0.7s)
+                setTimeout(() => {
+                  if (yearEl) {
+                    yearEl.style.transition = 'opacity 0.3s';
+                    yearEl.style.opacity = 1;
+                  }
+                  setTimeout(() => {
+                    if (statMainEl) {
+                      statMainEl.style.transition = 'opacity 0.3s';
+                      statMainEl.style.opacity = 1;
+                    }
+                    setTimeout(() => {
+                      if (statSublabelEl) {
+                        statSublabelEl.style.transition = 'opacity 0.3s';
+                        // Only now show and fade in sublabel, and trigger typewriter if present
+                        statSublabelEl.style.display = '';
+                        statSublabelEl.style.opacity = 1;
+                        if (typeof window.startTypewriterAnimation === 'function') {
+                          window.startTypewriterAnimation();
+                        }
+                      }
+                    }, 300);
+                  }, 300);
+                }, 700);
+              }
               // Remove listeners
               window.removeEventListener('wheel', this._outroBackHandler, true);
               window.removeEventListener('keydown', this._outroBackHandler, true);
@@ -460,8 +503,7 @@ export class Scene {
               this._outroTouchStartHandler = null;
               this._outroTouchEndHandler = null;
               this._outroTouchStartY = null;
-              // Go back to last timeline step
-              await this.gotoTimelineStep(this.timeline.length - 1);
+              // Do NOT call gotoTimelineStep recursively here!
             }
           };
           this._outroTouchStartHandler = (e) => {
@@ -498,6 +540,18 @@ export class Scene {
     }
     this.isAnimating = true;
     this._swipeLocked = true;
+    // --- Fade out timeline overlay and reset typewriter animation if visible ---
+    const timelineOverlay = document.getElementById('timeline-overlay');
+    if (timelineOverlay && timelineOverlay.style.opacity !== '0' && timelineOverlay.style.display !== 'none') {
+      timelineOverlay.style.transition = 'opacity 0.7s';
+      timelineOverlay.style.opacity = '0';
+      // Reset typewriter animation if present
+      if (typeof window.resetTypewriterAnimation === 'function') {
+        window.resetTypewriterAnimation();
+      }
+      // Wait for fade out before continuing
+      await new Promise(res => setTimeout(res, 700));
+    }
     // --- Deterministic detachment indices for each step ---
     if (!this._detachmentIndices) {
       // Always use the same shuffled indices for all steps
@@ -520,12 +574,11 @@ export class Scene {
       await new Promise(resolve => {
         this.animateMorph(start, end, positions, resolve);
       });
-      // Fade out timeline overlay
-      const overlay = document.getElementById('timeline-overlay');
-      if (overlay) {
-        overlay.style.transition = 'opacity 0.7s';
-        overlay.style.opacity = '0';
-      }
+    // Fade out timeline overlay
+    if (timelineOverlay) {
+      timelineOverlay.style.transition = 'opacity 0.7s';
+      timelineOverlay.style.opacity = '0';
+    }
       // Fade in intro overlay
       const intro = document.getElementById('intro-overlay');
       if (intro) {
@@ -583,15 +636,68 @@ export class Scene {
     // Animate detachment/reattachment and camera zoom for this step
     const data = this.timeline[level];
     const percent = data && this.totalItems ? (data.items_consumed / this.totalItems) : 0;
-    const prevPercent = (this.currentLevel >= 0 && this.timeline[this.currentLevel]) ? (this.timeline[this.currentLevel].items_consumed / this.totalItems) : 0;
+    let prevPercent = (this.currentLevel >= 0 && this.timeline[this.currentLevel]) ? (this.timeline[this.currentLevel].items_consumed / this.totalItems) : 0;
+
+    // --- Overlay fade out and type animation reset ---
+    if (timelineOverlay && timelineOverlay.style.opacity !== '0') {
+      timelineOverlay.style.transition = 'opacity 0.3s';
+      timelineOverlay.style.opacity = '0';
+      // Reset typewriter animation if present
+      const statSublabel = timelineOverlay.querySelector('.overlay-stat-sublabel');
+      if (statSublabel) {
+        statSublabel.innerHTML = '';
+        statSublabel.style.opacity = 0;
+        statSublabel.style.display = 'none';
+      }
+      // Wait for fade out before animating
+      await new Promise(res => setTimeout(res, 320));
+    }
+
+    // Camera zoom logic: always animate from prevPercent to percent (forward or backward)
     await this.animateDetachAndZoomDeterministic(prevPercent, percent);
     this.currentLevel = level;
     this.updateTimelineOverlay(level);
-    // Fade in overlay
-    const overlay = document.getElementById('timeline-overlay');
-    if (overlay) {
-      overlay.style.transition = 'opacity 0.7s';
-      overlay.style.opacity = '1';
+    // Fade in overlay in correct order: date → percentage → sublabel, after overlay is fully visible
+    if (timelineOverlay) {
+      timelineOverlay.style.transition = 'opacity 0.7s';
+      timelineOverlay.style.opacity = '1';
+      const yearEl = timelineOverlay.querySelector('.overlay-year');
+      const statMainEl = timelineOverlay.querySelector('.overlay-stat-main');
+      const statSublabelEl = timelineOverlay.querySelector('.overlay-stat-sublabel');
+      // Hide all children first
+      if (yearEl) { yearEl.style.opacity = 0; yearEl.style.display = ''; }
+      if (statMainEl) { statMainEl.style.opacity = 0; statMainEl.style.display = ''; }
+      if (statSublabelEl) {
+        // Always clear and hide before fade-in
+        if (typeof window.resetTypewriterAnimation === 'function') window.resetTypewriterAnimation();
+        statSublabelEl.innerHTML = '';
+        statSublabelEl.style.opacity = 0;
+        statSublabelEl.style.display = 'none';
+      }
+      // Start child fade-in after overlay fade-in completes (0.7s)
+      setTimeout(() => {
+        if (yearEl) {
+          yearEl.style.transition = 'opacity 0.3s';
+          yearEl.style.opacity = 1;
+        }
+        setTimeout(() => {
+          if (statMainEl) {
+            statMainEl.style.transition = 'opacity 0.3s';
+            statMainEl.style.opacity = 1;
+          }
+          setTimeout(() => {
+            if (statSublabelEl) {
+              statSublabelEl.style.transition = 'opacity 0.3s';
+              statSublabelEl.style.display = '';
+              statSublabelEl.style.opacity = 1;
+              // Always trigger typewriter after fade-in
+              if (typeof window.startTypewriterAnimation === 'function') {
+                window.startTypewriterAnimation();
+              }
+            }
+          }, 300);
+        }, 300);
+      }, 700);
     }
     this.isAnimating = false;
     this._swipeLocked = false;
@@ -625,9 +731,14 @@ export class Scene {
       }
     }
     // Animate detachment/reattachment and camera zoom
-    const startZ = this.camera.position.z;
-    const endZ = 5 + nextPercent * 3;
+    // Camera z is now based on _baseCameraZ (close) and zooms out with nextPercent
+    const minZ = this._baseCameraZ || 1.5;
+    const maxZ = minZ + 3.5; // How far out the camera can go
     const duration = 1200;
+    const startPercent = prevPercent;
+    const endPercent = nextPercent;
+    const startZ = minZ + (maxZ - minZ) * startPercent;
+    const endZ = minZ + (maxZ - minZ) * endPercent;
     const startTime = performance.now();
     await new Promise(resolve => {
       const animate = () => {
@@ -648,6 +759,8 @@ export class Scene {
         if (t < 1) {
           requestAnimationFrame(animate);
         } else {
+          this.camera.position.z = endZ; // Snap to final
+          this.camera.updateProjectionMatrix();
           resolve();
         }
       };

@@ -252,6 +252,12 @@ window.playClickSoundTwo = function() {
   playOnce(0.2); 
      // Play again after 120ms
 };
+// --- Typewriter animation cancellation logic ---
+window._typewriterToken = 0;
+window.resetTypewriterAnimation = function() {
+  window._typewriterToken++;
+};
+
 // Overlay update logic
 window.updateTimelineOverlay = function({ year, event, species, contaminationRate, description, show, step, totalSteps, references }) {
   const header = document.querySelector('.overlay-header');
@@ -303,6 +309,8 @@ window.updateTimelineOverlay = function({ year, event, species, contaminationRat
   stat.style.opacity = 1; // container always visible for layout
   statMain.textContent = '00%'; // Reset stat to 00% before anim
   // speciesEl.style.opacity = 0; // Removed: do not show species
+  // Cancel any ongoing typewriter animation
+  window.resetTypewriterAnimation();
   setTimeout(() => {
     yearEl.style.transition = 'opacity 0.5s';
     yearEl.style.opacity = 1;
@@ -312,7 +320,6 @@ window.updateTimelineOverlay = function({ year, event, species, contaminationRat
       statMain.style.opacity = 1;
       // Play click sound at start of stat-main animation
       if (window.playClickSound) window.playClickSound();
-      
       // Start contamination percentage animation (no fade)
       let targetPercent = Math.round((contaminationRate || 0) * 100);
       let animStart = null;
@@ -347,22 +354,23 @@ window.updateTimelineOverlay = function({ year, event, species, contaminationRat
             sublabelHTML = '';
           }
           let i = 0;
+          const myToken = ++window._typewriterToken;
           function typeWriter() {
+            if (window._typewriterToken !== myToken) return; // Abort if interrupted
             // Play click sound only at start of sublabel animation, with a short delay
             if (i === 0 && window.playClickSound) {
-              setTimeout(() => window.playClickSoundTwo(), 80); // 80ms delay before sound
+              setTimeout(() => { if (window._typewriterToken === myToken) window.playClickSoundTwo(); }, 80); // 80ms delay before sound
             }
             statSublabel.innerHTML = sublabelHTML + sublabelText.slice(0, i);
             if (i <= sublabelText.length) {
               i++;
-              setTimeout(typeWriter, 9); // speed in ms per letter
+              setTimeout(typeWriter, 9);
             } else {
+              if (window._typewriterToken !== myToken) return;
               // Append [SRC] link if references exists
               if (references) {
                 statSublabel.innerHTML += ` <a alt="Click for related study" href="${references}" target="_blank" rel="noopener noreferrer">[+]</a>`;
               }
-              // speciesEl.style.transition = 'opacity 0.5s';
-              // speciesEl.style.opacity = 1; // Removed: do not show species
             }
           }
           typeWriter();
