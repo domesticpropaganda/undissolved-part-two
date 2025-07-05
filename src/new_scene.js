@@ -288,8 +288,127 @@ export class Scene {
     // Camera stays fixed on z axis, only zooms in/out
     this.camera.position.x = 0;
     this.camera.position.y = 0;
-    // this.camera.position.z is set by animation/zoom logic
     this.camera.lookAt(0, 0, 0);
+
+    // --- Per-particle spinning for detached particles (option 1) ---
+    if (this.points && this._detachmentIndices && this.timeline && this.currentLevel >= 0) {
+      // Determine which particles are detached at this level
+      const data = this.timeline[this.currentLevel];
+      const percent = data && this.totalItems ? (data.items_consumed / this.totalItems) : 0;
+      const count = this.points.geometry.attributes.position.count;
+      const detachCount = Math.floor(count * percent);
+      const detachedSet = new Set(this._detachmentIndices.slice(0, detachCount));
+
+      // --- Animate reattaching particles ---
+      if (!this._reattachAnimations) this._reattachAnimations = {};
+      if (!this._reattachAnimationActive) this._reattachAnimationActive = false;
+      if (!this._particleSpinState) this._particleSpinState = {};
+      if (!this._particleSpinTargetLevel) this._particleSpinTargetLevel = {};
+      if (!this._sphericalDetachTargets) this._sphericalDetachTargets = {};
+      if (!this._sphericalDetachTargets[this.currentLevel]) {
+        // fallback: use previous targets if not present
+        this._sphericalDetachTargets[this.currentLevel] = [];
+      }
+
+      // --- Find particles that are reattaching (were spinning, now not detached) ---
+      for (let i = 0; i < count; i++) {
+        const wasSpinning = this._particleSpinState[i] !== undefined;
+        const shouldSpin = detachedSet.has(i);
+        if (wasSpinning && !shouldSpin && !this._reattachAnimations[i]) {
+          // Start reattach animation for this particle
+          const positions = this.points.geometry.attributes.position;
+          const from = [positions.getX(i), positions.getY(i), positions.getZ(i)];
+          const to = [this._meshPositions[i*3], this._meshPositions[i*3+1], this._meshPositions[i*3+2]];
+          this._reattachAnimations[i] = {
+            from,
+            to,
+            start: performance.now(),
+            duration: 600,
+            // Save spin state for this animation
+            spinState: this._particleSpinState[i] ? { ...this._particleSpinState[i] } : null
+          };
+          // Do NOT remove spin state here; let it be removed only after reattach animation completes
+        }
+      }
+
+      // --- Initialize per-particle spin state only for newly detached particles ---
+      for (let i = 0; i < count; i++) {
+        if (detachedSet.has(i)) {
+          // Only initialize if not already spinning
+          if (!this._particleSpinState[i]) {
+            // Use the detached target as the base position
+            const [x, y, z] = this._sphericalDetachTargets[this.currentLevel][i] || [0, 0, 0];
+            // Convert to cylindrical coordinates for Z axis rotation
+            const r = Math.sqrt(x * x + y * y); // distance from Z axis
+            let theta = Math.atan2(y, x); // angle around Z
+            // z remains constant for Z axis rotation
+            // Assign random angular velocity (small, for gentle spin)
+            const dTheta = (Math.random() - 0.5) * 0.01 + 0.01; // radians/frame
+            this._particleSpinState[i] = { r, theta, z, dTheta };
+            this._particleSpinTargetLevel[i] = this.currentLevel;
+          }
+        } else {
+          // If particle is no longer detached and not animating, remove its spin state
+          if (this._particleSpinState[i] && !this._reattachAnimations[i]) {
+            delete this._particleSpinState[i];
+            delete this._particleSpinTargetLevel[i];
+          }
+        }
+      }
+
+      // --- Animate spinning and reattaching for detached particles (Z axis only) ---
+      const positions = this.points.geometry.attributes.position;
+      let now = performance.now();
+      let anyReattaching = false;
+      for (let i = 0; i < count; i++) {
+        if (detachedSet.has(i) && this._particleSpinState[i]) {
+          let s = this._particleSpinState[i];
+          // Increment angle around Y (instead of Z)
+          s.theta += s.dTheta;
+          // Convert to Cartesian for Y axis rotation
+          // Original base position: (r, theta, z) in cylindrical (Z axis)
+          // For Y axis: (r, theta, y) where r = sqrt(x^2 + z^2), theta = atan2(x, z)
+          // We'll reinterpret r/theta as radius/angle in XZ plane, y stays constant
+          const y = s.z; // use z as y for vertical position
+          const r = s.r;
+          const theta = s.theta;
+          const x = r * Math.cos(theta);
+          const z = r * Math.sin(theta);
+          positions.setXYZ(i, x, y, z);
+        } else if (this._reattachAnimations[i]) {
+          // Animate reattaching from last spin state (if any) to mesh
+          anyReattaching = true;
+          const anim = this._reattachAnimations[i];
+          const t = Math.min((now - anim.start) / anim.duration, 1);
+          let from = anim.from;
+          // If there was a spin state, interpolate from the last spinning position
+          if (anim.spinState) {
+            // Use the spin state to get the last spinning position at t=0
+            const s = anim.spinState;
+            from = [s.r * Math.cos(s.theta), s.r * Math.sin(s.theta), s.z];
+          }
+          const x = from[0] + (anim.to[0] - from[0]) * t;
+          const y = from[1] + (anim.to[1] - from[1]) * t;
+          const z = from[2] + (anim.to[2] - from[2]) * t;
+          positions.setXYZ(i, x, y, z);
+          if (t >= 1) {
+            // Animation done, clean up
+            delete this._reattachAnimations[i];
+            if (this._particleSpinState[i]) delete this._particleSpinState[i];
+            if (this._particleSpinTargetLevel[i]) delete this._particleSpinTargetLevel[i];
+          }
+        }
+      }
+      positions.needsUpdate = true;
+      // If any reattaching, keep animation loop going
+      this._reattachAnimationActive = anyReattaching;
+    } else {
+      // If not spinning, clear spin state
+      this._particleSpinState = null;
+      this._particleSpinTargetLevel = null;
+      this._reattachAnimations = null;
+      this._reattachAnimationActive = false;
+    }
 
     // Depth of field: fade distant particles (if points exist)
     if (this.points) {
@@ -629,34 +748,41 @@ export class Scene {
     }
     // Handle return to intro overlay state
     if (level === -1) {
-      // Animate all points back to mesh (particles form the human shape)
+      // Animate all points back to mesh (particles form the human shape) and camera zoom in at the same time
       const positions = this.points.geometry.attributes.position;
+      const count = positions.count;
       const start = [];
-      for (let i = 0; i < positions.count; i++) {
+      for (let i = 0; i < count; i++) {
         start.push(positions.getX(i), positions.getY(i), positions.getZ(i));
       }
       const end = this._meshPositions.slice();
-      // Animate both points and camera z back to initial value
       const cameraStartZ = this.camera.position.z;
       const cameraEndZ = (typeof this._baseCameraZ === 'number') ? this._baseCameraZ : 2;
       const duration = 1200;
       const startTime = performance.now();
+      // For smooth spiral-in, if any particles are detached and spinning, animate them back along a spiral path
+      // We'll use the last known spin state if available, otherwise just lerp
+      const spinStates = this._particleSpinState || {};
       await new Promise(resolve => {
         const animate = () => {
           const elapsed = performance.now() - startTime;
+          // Use easeInOutCubic for camera and lerp, but spiral-in must be cubic ease-in
           const t = Math.min(elapsed / duration, 1);
-          for (let i = 0; i < positions.count; i++) {
-            const idx = i * 3;
+          const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+          for (let i = 0; i < count; i++) {
+            let from = [start[i * 3], start[i * 3 + 1], start[i * 3 + 2]];
+            let to = [end[i * 3], end[i * 3 + 1], end[i * 3 + 2]];
+            // Just lerp for all particles (no spiral)
             positions.setXYZ(
               i,
-              start[idx] + (end[idx] - start[idx]) * t,
-              start[idx + 1] + (end[idx + 1] - start[idx + 1]) * t,
-              start[idx + 2] + (end[idx + 2] - start[idx + 2]) * t
+              from[0] + (to[0] - from[0]) * ease,
+              from[1] + (to[1] - from[1]) * ease,
+              from[2] + (to[2] - from[2]) * ease
             );
           }
           positions.needsUpdate = true;
           if (this.camera) {
-            this.camera.position.z = cameraStartZ + (cameraEndZ - cameraStartZ) * t;
+            this.camera.position.z = cameraStartZ + (cameraEndZ - cameraStartZ) * ease;
             this.camera.updateProjectionMatrix();
           }
           if (t < 1) {
@@ -666,6 +792,11 @@ export class Scene {
               this.camera.position.z = cameraEndZ;
               this.camera.updateProjectionMatrix();
             }
+            // Clear all spin and reattach states
+            this._particleSpinState = null;
+            this._particleSpinTargetLevel = null;
+            this._reattachAnimations = null;
+            this._reattachAnimationActive = false;
             resolve();
           }
         };
@@ -774,8 +905,6 @@ export class Scene {
     const detachCountNext = Math.floor(count * nextPercent);
     const detachIndicesPrev = new Set(this._detachmentIndices.slice(0, detachCountPrev));
     const detachIndicesNext = new Set(this._detachmentIndices.slice(0, detachCountNext));
-    const startPositions = [];
-    const endPositions = [];
     // Determine the current timeline step (level) for detachment scale
     let currentStep = 0;
     if (this.timeline && this.timeline.length > 0 && typeof nextPercent === 'number') {
@@ -805,54 +934,53 @@ export class Scene {
         const sx = r * Math.sin(phi) * Math.cos(theta);
         const sy = r * Math.sin(phi) * Math.sin(theta);
         const sz = r * Math.cos(phi);
-        this._sphericalDetachTargets[currentStep][i] = [sx, sy, sz];
+        this._sphericalDetachTargets[currentStep][i] = [sx, sy, sz, theta, phi, r];
       }
     }
-    for (let i = 0; i < count; i++) {
-      let x = positions.getX(i), y = positions.getY(i), z = positions.getZ(i);
-      let meshX = this._meshPositions[i*3], meshY = this._meshPositions[i*3+1], meshZ = this._meshPositions[i*3+2];
-      // Only animate if detachment state changes
-      const wasDetached = detachIndicesPrev.has(i);
-      const willBeDetached = detachIndicesNext.has(i);
-      if (wasDetached !== willBeDetached) {
-        // Animate from current to target
-        startPositions.push(x, y, z);
-        if (willBeDetached) {
-          // Animate to spherical detachment
-          const [sx, sy, sz] = this._sphericalDetachTargets[currentStep][i];
-          endPositions.push(sx, sy, sz);
-        } else {
-          // Animate to mesh
-          endPositions.push(meshX, meshY, meshZ);
-        }
-      } else {
-        // Keep static: set both start and end to current position
-        startPositions.push(x, y, z);
-        endPositions.push(x, y, z);
-      }
-    }
+
+    // No spiral-out animation state needed for normal detachment
+
     // Animate detachment/reattachment and camera zoom
-    // Camera z is now based on _baseCameraZ (close) and zooms out with nextPercent
     const minZ = this._baseCameraZ || 1.5;
-    const maxZ = minZ + 3.5; // How far out the camera can go
+    const maxZ = minZ + 3.5;
     const duration = 1200;
     const startPercent = prevPercent;
     const endPercent = nextPercent;
     const startZ = minZ + (maxZ - minZ) * startPercent;
     const endZ = minZ + (maxZ - minZ) * endPercent;
     const startTime = performance.now();
+
     await new Promise(resolve => {
       const animate = () => {
         const elapsed = performance.now() - startTime;
         const t = Math.min(elapsed / duration, 1);
         for (let i = 0; i < count; i++) {
           const idx = i * 3;
-          positions.setXYZ(
-            i,
-            startPositions[idx] + (endPositions[idx] - startPositions[idx]) * t,
-            startPositions[idx+1] + (endPositions[idx+1] - startPositions[idx+1]) * t,
-            startPositions[idx+2] + (endPositions[idx+2] - startPositions[idx+2]) * t
-          );
+          const wasDetached = detachIndicesPrev.has(i);
+          const willBeDetached = detachIndicesNext.has(i);
+          // For detachment/reattachment, linear interpolation only
+          let from, to;
+          if (wasDetached !== willBeDetached) {
+            if (willBeDetached) {
+              // Animate to spherical detachment
+              const [sx, sy, sz] = this._sphericalDetachTargets[currentStep][i];
+              from = [positions.getX(i), positions.getY(i), positions.getZ(i)];
+              to = [sx, sy, sz];
+            } else {
+              // Animate to mesh
+              from = [positions.getX(i), positions.getY(i), positions.getZ(i)];
+              to = [this._meshPositions[i*3], this._meshPositions[i*3+1], this._meshPositions[i*3+2]];
+            }
+            positions.setXYZ(
+              i,
+              from[0] + (to[0] - from[0]) * t,
+              from[1] + (to[1] - from[1]) * t,
+              from[2] + (to[2] - from[2]) * t
+            );
+          } else {
+            // Keep static
+            positions.setXYZ(i, positions.getX(i), positions.getY(i), positions.getZ(i));
+          }
         }
         positions.needsUpdate = true;
         this.camera.position.z = startZ + (endZ - startZ) * t;
@@ -860,7 +988,7 @@ export class Scene {
         if (t < 1) {
           requestAnimationFrame(animate);
         } else {
-          this.camera.position.z = endZ; // Snap to final
+          this.camera.position.z = endZ;
           this.camera.updateProjectionMatrix();
           resolve();
         }
