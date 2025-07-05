@@ -117,7 +117,7 @@ export class Scene {
       if (this.meshObj) {
         const meshPositions = this.meshObj.geometry.attributes.position.array;
         this._meshPositions = [];
-        for (let i = 0; i < 3000; i++) {
+        for (let i = 0; i < 4000; i++) {
           const idx = (i * 3) % meshPositions.length;
           this._meshPositions.push(meshPositions[idx], meshPositions[idx + 1], meshPositions[idx + 2]);
         }
@@ -316,16 +316,26 @@ export class Scene {
         const shouldSpin = detachedSet.has(i);
         if (wasSpinning && !shouldSpin && !this._reattachAnimations[i]) {
           // Start reattach animation for this particle
-          const positions = this.points.geometry.attributes.position;
-          const from = [positions.getX(i), positions.getY(i), positions.getZ(i)];
+          // Always use the current spinning position as the start
+          let from;
+          if (this._particleSpinState[i]) {
+            // Compute current spinning position
+            const s = this._particleSpinState[i];
+            const x = s.orbitRadius * Math.cos(s.theta);
+            const z = s.orbitRadius * Math.sin(s.theta);
+            const y = s.y;
+            from = [x, y, z];
+          } else {
+            // Fallback: use current buffer position
+            const positions = this.points.geometry.attributes.position;
+            from = [positions.getX(i), positions.getY(i), positions.getZ(i)];
+          }
           const to = [this._meshPositions[i*3], this._meshPositions[i*3+1], this._meshPositions[i*3+2]];
           this._reattachAnimations[i] = {
             from,
             to,
             start: performance.now(),
-            duration: 600,
-            // Save spin state for this animation
-            spinState: this._particleSpinState[i] ? { ...this._particleSpinState[i] } : null
+            duration: 600
           };
           // Do NOT remove spin state here; let it be removed only after reattach animation completes
         }
@@ -338,13 +348,22 @@ export class Scene {
           if (!this._particleSpinState[i]) {
             // Use the detached target as the base position
             const [x, y, z] = this._sphericalDetachTargets[this.currentLevel][i] || [0, 0, 0];
-            // Convert to cylindrical coordinates for Z axis rotation
-            const r = Math.sqrt(x * x + y * y); // distance from Z axis
-            let theta = Math.atan2(y, x); // angle around Z
-            // z remains constant for Z axis rotation
-            // Assign random angular velocity (small, for gentle spin)
-            const dTheta = (Math.random() - 0.5) * 0.01 + 0.01; // radians/frame
-            this._particleSpinState[i] = { r, theta, z, dTheta };
+            // Calculate radius in XZ plane from origin
+            const radius = Math.sqrt(x * x + z * z);
+            // Calculate initial angle in XZ plane
+            let theta = Math.atan2(z, x);
+            // Shared angular speed for all particles
+            if (this._sharedOrbitDTheta === undefined) {
+              this._sharedOrbitDTheta = 0.006;
+            }
+            const dTheta = this._sharedOrbitDTheta;
+            this._particleSpinState[i] = {
+              theta,
+              dTheta,
+              y: y, // keep y fixed
+              orbitRadius: radius, // fixed radius after detachment
+              spinning: true
+            };
             this._particleSpinTargetLevel[i] = this.currentLevel;
           }
         } else {
@@ -363,33 +382,23 @@ export class Scene {
       for (let i = 0; i < count; i++) {
         if (detachedSet.has(i) && this._particleSpinState[i]) {
           let s = this._particleSpinState[i];
-          // Increment angle around Y (instead of Z)
+          // Increment angle for spinning
           s.theta += s.dTheta;
-          // Convert to Cartesian for Y axis rotation
-          // Original base position: (r, theta, z) in cylindrical (Z axis)
-          // For Y axis: (r, theta, y) where r = sqrt(x^2 + z^2), theta = atan2(x, z)
-          // We'll reinterpret r/theta as radius/angle in XZ plane, y stays constant
-          const y = s.z; // use z as y for vertical position
-          const r = s.r;
-          const theta = s.theta;
-          const x = r * Math.cos(theta);
-          const z = r * Math.sin(theta);
+          // Spin around Y axis, keep y fixed, radius is fixed from detachment
+          const x = s.orbitRadius * Math.cos(s.theta);
+          const z = s.orbitRadius * Math.sin(s.theta);
+          const y = s.y;
           positions.setXYZ(i, x, y, z);
         } else if (this._reattachAnimations[i]) {
-          // Animate reattaching from last spin state (if any) to mesh
+          // Animate reattaching from current spinning position to mesh
           anyReattaching = true;
           const anim = this._reattachAnimations[i];
           const t = Math.min((now - anim.start) / anim.duration, 1);
-          let from = anim.from;
-          // If there was a spin state, interpolate from the last spinning position
-          if (anim.spinState) {
-            // Use the spin state to get the last spinning position at t=0
-            const s = anim.spinState;
-            from = [s.r * Math.cos(s.theta), s.r * Math.sin(s.theta), s.z];
-          }
-          const x = from[0] + (anim.to[0] - from[0]) * t;
-          const y = from[1] + (anim.to[1] - from[1]) * t;
-          const z = from[2] + (anim.to[2] - from[2]) * t;
+          const from = anim.from;
+          const to = anim.to;
+          const x = from[0] + (to[0] - from[0]) * t;
+          const y = from[1] + (to[1] - from[1]) * t;
+          const z = from[2] + (to[2] - from[2]) * t;
           positions.setXYZ(i, x, y, z);
           if (t >= 1) {
             // Animation done, clean up
