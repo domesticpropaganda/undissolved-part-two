@@ -750,9 +750,8 @@ export class Scene {
     if (level === -1) {
       // Animate all points back to mesh (particles form the human shape) and camera zoom in at the same time
       const positions = this.points.geometry.attributes.position;
-      const count = positions.count;
       const start = [];
-      for (let i = 0; i < count; i++) {
+      for (let i = 0; i < positions.count; i++) {
         start.push(positions.getX(i), positions.getY(i), positions.getZ(i));
       }
       const end = this._meshPositions.slice();
@@ -760,29 +759,24 @@ export class Scene {
       const cameraEndZ = (typeof this._baseCameraZ === 'number') ? this._baseCameraZ : 2;
       const duration = 1200;
       const startTime = performance.now();
-      // For smooth spiral-in, if any particles are detached and spinning, animate them back along a spiral path
-      // We'll use the last known spin state if available, otherwise just lerp
-      const spinStates = this._particleSpinState || {};
+      // Animate camera and particles in lockstep
       await new Promise(resolve => {
         const animate = () => {
           const elapsed = performance.now() - startTime;
-          // Use easeInOutCubic for camera and lerp, but spiral-in must be cubic ease-in
           const t = Math.min(elapsed / duration, 1);
-          const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-          for (let i = 0; i < count; i++) {
-            let from = [start[i * 3], start[i * 3 + 1], start[i * 3 + 2]];
-            let to = [end[i * 3], end[i * 3 + 1], end[i * 3 + 2]];
-            // Just lerp for all particles (no spiral)
+          // Animate both camera and particles at the same time
+          for (let i = 0; i < positions.count; i++) {
+            const idx = i * 3;
             positions.setXYZ(
               i,
-              from[0] + (to[0] - from[0]) * ease,
-              from[1] + (to[1] - from[1]) * ease,
-              from[2] + (to[2] - from[2]) * ease
+              start[idx] + (end[idx] - start[idx]) * t,
+              start[idx + 1] + (end[idx + 1] - start[idx + 1]) * t,
+              start[idx + 2] + (end[idx + 2] - start[idx + 2]) * t
             );
           }
           positions.needsUpdate = true;
           if (this.camera) {
-            this.camera.position.z = cameraStartZ + (cameraEndZ - cameraStartZ) * ease;
+            this.camera.position.z = cameraStartZ + (cameraEndZ - cameraStartZ) * t;
             this.camera.updateProjectionMatrix();
           }
           if (t < 1) {
@@ -905,6 +899,8 @@ export class Scene {
     const detachCountNext = Math.floor(count * nextPercent);
     const detachIndicesPrev = new Set(this._detachmentIndices.slice(0, detachCountPrev));
     const detachIndicesNext = new Set(this._detachmentIndices.slice(0, detachCountNext));
+    const startPositions = [];
+    const endPositions = [];
     // Determine the current timeline step (level) for detachment scale
     let currentStep = 0;
     if (this.timeline && this.timeline.length > 0 && typeof nextPercent === 'number') {
@@ -934,53 +930,54 @@ export class Scene {
         const sx = r * Math.sin(phi) * Math.cos(theta);
         const sy = r * Math.sin(phi) * Math.sin(theta);
         const sz = r * Math.cos(phi);
-        this._sphericalDetachTargets[currentStep][i] = [sx, sy, sz, theta, phi, r];
+        this._sphericalDetachTargets[currentStep][i] = [sx, sy, sz];
       }
     }
-
-    // No spiral-out animation state needed for normal detachment
-
+    for (let i = 0; i < count; i++) {
+      let x = positions.getX(i), y = positions.getY(i), z = positions.getZ(i);
+      let meshX = this._meshPositions[i*3], meshY = this._meshPositions[i*3+1], meshZ = this._meshPositions[i*3+2];
+      // Only animate if detachment state changes
+      const wasDetached = detachIndicesPrev.has(i);
+      const willBeDetached = detachIndicesNext.has(i);
+      if (wasDetached !== willBeDetached) {
+        // Animate from current to target
+        startPositions.push(x, y, z);
+        if (willBeDetached) {
+          // Animate to spherical detachment
+          const [sx, sy, sz] = this._sphericalDetachTargets[currentStep][i];
+          endPositions.push(sx, sy, sz);
+        } else {
+          // Animate to mesh
+          endPositions.push(meshX, meshY, meshZ);
+        }
+      } else {
+        // Keep static: set both start and end to current position
+        startPositions.push(x, y, z);
+        endPositions.push(x, y, z);
+      }
+    }
     // Animate detachment/reattachment and camera zoom
+    // Camera z is now based on _baseCameraZ (close) and zooms out with nextPercent
     const minZ = this._baseCameraZ || 1.5;
-    const maxZ = minZ + 3.5;
+    const maxZ = minZ + 3.5; // How far out the camera can go
     const duration = 1200;
     const startPercent = prevPercent;
     const endPercent = nextPercent;
     const startZ = minZ + (maxZ - minZ) * startPercent;
     const endZ = minZ + (maxZ - minZ) * endPercent;
     const startTime = performance.now();
-
     await new Promise(resolve => {
       const animate = () => {
         const elapsed = performance.now() - startTime;
         const t = Math.min(elapsed / duration, 1);
         for (let i = 0; i < count; i++) {
           const idx = i * 3;
-          const wasDetached = detachIndicesPrev.has(i);
-          const willBeDetached = detachIndicesNext.has(i);
-          // For detachment/reattachment, linear interpolation only
-          let from, to;
-          if (wasDetached !== willBeDetached) {
-            if (willBeDetached) {
-              // Animate to spherical detachment
-              const [sx, sy, sz] = this._sphericalDetachTargets[currentStep][i];
-              from = [positions.getX(i), positions.getY(i), positions.getZ(i)];
-              to = [sx, sy, sz];
-            } else {
-              // Animate to mesh
-              from = [positions.getX(i), positions.getY(i), positions.getZ(i)];
-              to = [this._meshPositions[i*3], this._meshPositions[i*3+1], this._meshPositions[i*3+2]];
-            }
-            positions.setXYZ(
-              i,
-              from[0] + (to[0] - from[0]) * t,
-              from[1] + (to[1] - from[1]) * t,
-              from[2] + (to[2] - from[2]) * t
-            );
-          } else {
-            // Keep static
-            positions.setXYZ(i, positions.getX(i), positions.getY(i), positions.getZ(i));
-          }
+          positions.setXYZ(
+            i,
+            startPositions[idx] + (endPositions[idx] - startPositions[idx]) * t,
+            startPositions[idx+1] + (endPositions[idx+1] - startPositions[idx+1]) * t,
+            startPositions[idx+2] + (endPositions[idx+2] - startPositions[idx+2]) * t
+          );
         }
         positions.needsUpdate = true;
         this.camera.position.z = startZ + (endZ - startZ) * t;
@@ -988,7 +985,7 @@ export class Scene {
         if (t < 1) {
           requestAnimationFrame(animate);
         } else {
-          this.camera.position.z = endZ;
+          this.camera.position.z = endZ; // Snap to final
           this.camera.updateProjectionMatrix();
           resolve();
         }
