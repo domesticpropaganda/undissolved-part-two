@@ -317,7 +317,7 @@ a.visited {
 }
 
 .overlay-year {
-  grid-column: 2 / 4;
+  grid-column: 2 / 7;
   grid-row: 3;
   align-self: center;
   justify-self: start;
@@ -448,7 +448,7 @@ a.visited {
   color: var(--chalk-white, #fff);
   max-width: 75vw;
   text-align: center;
-  margin: 0 auto;
+  margin: 25vh auto;
 }
 
 #outro-close-btn {

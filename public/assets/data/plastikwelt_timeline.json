@@ -1,27 +1,27 @@
 [
   {
     "age": 20,
-    "items_consumed": 150,
-    "description": "Early life essentials: basic school uniforms, casualwear, and shoes accumulated across childhood and teenage years. Mostly practical and worn long-term."
+    "items_consumed": 300,
+    "description": "festival shirts, impulse hoodies, fast-fashion jeans. Worn a few times, then swapped, forgotten, or binned mid-trend."
   },
   {
     "age": 30,
-    "items_consumed": 400,
-    "description": "Adulthood begins: wardrobe expands with workwear, socialwear, seasonal pieces, and trend-driven purchases. Fast fashion enters regular rotation."
+    "items_consumed": 700,
+    "description": "workwear, gym gear, night-out outfits — often replaced before worn out. Wardrobe churn normalized; few items repaired."
   },
   {
     "age": 40,
-    "items_consumed": 700,
-    "description": "Lifestyle diversification: items pile up for work, leisure, sports, events, and parenting. Duplicates, gifts, and rarely worn pieces increase."
+    "items_consumed": 1100,
+    "description": "duplicates, misfits, and sale grabs — piling up faster than they’re worn. Styles change, habits don’t. Closets fill, landfills follow."
   },
   {
     "age": 50,
-    "items_consumed": 1000,
-    "description": "Peak accumulation: decades of buying, seasonal refreshes, and special-purpose items result in a wardrobe much larger than daily needs."
+    "items_consumed": 1350,
+    "description": "trend pieces, seasonal layers, and untouched occasionwear. Discarded not because they broke — but because they no longer fit a mood or moment."
   },
   {
     "age": 65,
-    "items_consumed": 1200,
-    "description": "Slowed purchasing, but lifetime accumulation includes stored, forgotten, and unworn garments. The total footprint reflects a full consumption arc."
+    "items_consumed": 1500,
+    "description": "old uniforms, gift sweaters, fast-fading synthetics. Some never worn. Most still intact. A lifetime of garments, none truly gone."
   }
 ]
