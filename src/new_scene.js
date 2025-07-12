@@ -258,21 +258,9 @@ export class Scene {
     if (this._particleMeshGeometries && this._particleMeshGeometries.length === Scene.PARTICLE_SHAPE_COUNT) {
       geometries = this._particleMeshGeometries;
     } else {
-      // Fallback: fill with primitives for missing meshes
       geometries = [];
       for (let i = 0; i < Scene.PARTICLE_SHAPE_COUNT; i++) {
-        if (this._particleMeshGeometries && this._particleMeshGeometries[i]) {
-          geometries.push(this._particleMeshGeometries[i]);
-        } else {
-          // Use different primitive for each missing mesh
-          if (i % 3 === 0) {
-            geometries.push(new THREE.BoxGeometry(Scene.PARTICLE_MIN_WIDTH, Scene.PARTICLE_MIN_WIDTH, Scene.PARTICLE_MIN_WIDTH));
-          } else if (i % 3 === 1) {
-            geometries.push(new THREE.SphereGeometry(Scene.PARTICLE_MIN_DEPTH, 8, 8));
-          } else {
-            geometries.push(new THREE.ConeGeometry(Scene.PARTICLE_MIN_WIDTH, Scene.PARTICLE_TARGET_SIZE, 4));
-          }
-        }
+        geometries.push(new THREE.BoxGeometry(Scene.PARTICLE_MIN_WIDTH, Scene.PARTICLE_MIN_WIDTH, Scene.PARTICLE_MIN_WIDTH));
       }
     }
     const baseMaterial = new THREE.MeshStandardMaterial({
@@ -280,15 +268,52 @@ export class Scene {
       roughness: 0.5,
       metalness: 0.1
     });
-    const count = this._meshPositions.length / 3;
-    // Assign a random shape to each particle
-    this._particleShapeIndices = [];
-    for (let i = 0; i < count; i++) {
-      this._particleShapeIndices[i] = Math.floor(Math.random() * Scene.PARTICLE_SHAPE_COUNT);
-    }
-    // Count per shape
+    // --- Robust per-particle state: create this.particles array ---
+    const garmentToMeshIdx = {
+      'T-shirts': 0,
+      'Shirts': 1,
+      'Jeans': 2,
+      'Sneakers': 3,
+      'Pullovers': 4
+    };
+    this.particles = [];
     const shapeCounts = Array(Scene.PARTICLE_SHAPE_COUNT).fill(0);
-    for (let i = 0; i < count; i++) shapeCounts[this._particleShapeIndices[i]]++;
+    const shapeParticleIndices = Array(Scene.PARTICLE_SHAPE_COUNT).fill().map(() => []);
+    let totalParticles = 0;
+    let meshPositions = [];
+    if (this.timeline && this.timeline.length === Scene.PARTICLE_SHAPE_COUNT) {
+      for (let t = 0; t < this.timeline.length; t++) {
+        const garment = this.timeline[t].garment;
+        const count = this.timeline[t].items_consumed;
+        const meshIdx = garmentToMeshIdx[garment];
+        for (let i = 0; i < count; i++) {
+          const origIdx = ((totalParticles + i) * 3) % this._meshPositions.length;
+          const pos = [this._meshPositions[origIdx], this._meshPositions[origIdx + 1], this._meshPositions[origIdx + 2]];
+          meshPositions.push(...pos);
+          shapeParticleIndices[meshIdx].push(totalParticles + i);
+          // Create particle object
+          this.particles.push({
+            garmentType: garment,
+            meshIdx,
+            initialPosition: pos,
+            detachmentTarget: null,
+            detachmentStep: null,
+            isDetached: false,
+            spinState: null,
+            animationState: null // 'detaching', 'spinning', 'reattaching', null
+          });
+        }
+        shapeCounts[meshIdx] += count;
+        totalParticles += count;
+      }
+    }
+    this._meshPositions = meshPositions;
+    this._particleShapeIndices = [];
+    for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
+      for (let idx of shapeParticleIndices[shape]) {
+        this._particleShapeIndices[idx] = shape;
+      }
+    }
     // Create InstancedMeshes
     this._particleMeshes = [];
     for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
@@ -302,7 +327,7 @@ export class Scene {
     // Store mapping: for each shape, which instance index is which particle
     this._particleInstanceMap = Array(Scene.PARTICLE_SHAPE_COUNT).fill().map(() => []);
     const instanceIndices = Array(Scene.PARTICLE_SHAPE_COUNT).fill(0);
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < totalParticles; i++) {
       const shape = this._particleShapeIndices[i];
       this._particleInstanceMap[shape][instanceIndices[shape]] = i;
       instanceIndices[shape]++;
@@ -311,7 +336,7 @@ export class Scene {
     for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
       let mesh = this._particleMeshes[shape];
       let idx = 0;
-      for (let i = 0; i < count; i++) {
+      for (let i = 0; i < totalParticles; i++) {
         if (this._particleShapeIndices[i] !== shape) continue;
         const x = this._meshPositions[i * 3];
         const y = this._meshPositions[i * 3 + 1];
@@ -326,7 +351,7 @@ export class Scene {
     }
     // Store for animation loop
     this.points = null; // No longer using Points
-    this._instancedParticleCount = count;
+    this._instancedParticleCount = totalParticles;
     this._instancedMeshesReady = true;
     // Lighting (add a soft ambient and directional if not present)
     if (!this._particleLight) {
@@ -587,208 +612,167 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
     // --- Per-particle spinning for detached particles (InstancedMesh version) ---
     if (this._isMorphingToIntro || this._isMorphingDetach) {
       // Skip per-particle logic during morph to intro or detachment animation
-    } else if (this._particleMeshes && this._detachmentIndices && this.timeline && this.currentLevel >= 0) {
-      // Determine which particles are detached at this level
-      const data = this.timeline[this.currentLevel];
-      const percent = data && this.totalItems ? (data.items_consumed / this.totalItems) : 0;
-      const count = this._instancedParticleCount;
-      const detachCount = Math.floor(count * percent);
-      const detachedSet = new Set(this._detachmentIndices.slice(0, detachCount));
-
-      // --- Animate reattaching particles ---
-      if (!this._reattachAnimations) this._reattachAnimations = {};
-      if (!this._reattachAnimationActive) this._reattachAnimationActive = false;
-      if (!this._particleSpinState) this._particleSpinState = {};
-      if (!this._particleSpinTargetLevel) this._particleSpinTargetLevel = {};
-      if (!this._sphericalDetachTargets) this._sphericalDetachTargets = {};
-      if (!this._sphericalDetachTargets[this.currentLevel]) {
-        // fallback: use previous targets if not present
-        this._sphericalDetachTargets[this.currentLevel] = [];
+    } else if (this._particleMeshes && this.particles && this.timeline && this.currentLevel >= 0) {
+      // --- Robust per-particle detachment and spinning logic ---
+      // Shared variables declared once per animate() scope
+      const garmentToMeshIdx = {
+        'T-shirts': 0,
+        'Shirts': 1,
+        'Jeans': 2,
+        'Sneakers': 3,
+        'Pullovers': 4
+      };
+      const detachedGarmentTypes = new Set();
+      for (let step = 0; step <= this.currentLevel; step++) {
+        if (!this.timeline[step]) continue;
+        detachedGarmentTypes.add(this.timeline[step].garment);
       }
-
-      // --- Find particles that are reattaching (were spinning, now not detached) ---
-      for (let i = 0; i < count; i++) {
-        const wasSpinning = this._particleSpinState[i] !== undefined;
-        const shouldSpin = detachedSet.has(i);
-        if (wasSpinning && !shouldSpin && !this._reattachAnimations[i]) {
-          // Start reattach animation for this particle
-          let from;
-          if (this._particleSpinState[i]) {
-            const s = this._particleSpinState[i];
-            const x = s.orbitRadius * Math.cos(s.theta);
-            const z = s.orbitRadius * Math.sin(s.theta);
-            const y = s.y;
-            from = [x, y, z];
-          } else {
-            from = [this._meshPositions[i*3], this._meshPositions[i*3+1], this._meshPositions[i*3+2]];
-          }
-          const to = [this._meshPositions[i*3], this._meshPositions[i*3+1], this._meshPositions[i*3+2]];
-          this._reattachAnimations[i] = {
-            from,
-            to,
-            start: performance.now(),
-            duration: 1200
-          };
-        }
-      }
-
-      // --- Initialize per-particle spin state only for newly detached particles ---
-      for (let i = 0; i < count; i++) {
-        if (detachedSet.has(i)) {
-          // Only initialize spin state if not already spinning, and only after detachment animation is complete
-          if (!this._particleSpinState[i] && !this._detachAnimations[i] && this._detachAnimationCompleted && this._detachAnimationCompleted[i]) {
-            // Use the detached target as the base position
-            const [x, y, z] = this._sphericalDetachTargets[this.currentLevel][i] || [0, 0, 0];
-            // Calculate radius in XZ plane from origin
-            const radius = Math.sqrt(x * x + z * z);
-            // Calculate initial angle in XZ plane
-            let theta = Math.atan2(z, x);
-            // Shared angular speed for all particles
-            if (this._sharedOrbitDTheta === undefined) {
-              this._sharedOrbitDTheta = 0.004;
-            }
-            const dTheta = this._sharedOrbitDTheta;
-            this._particleSpinState[i] = {
-              theta,
-              dTheta,
-              y: y, // keep y fixed
-              orbitRadius: radius, // fixed radius after detachment
-              spinning: true
-            };
-            this._particleSpinTargetLevel[i] = this.currentLevel;
-          }
-        } else {
-          // If particle is no longer detached and not animating, remove its spin state
-          if (this._particleSpinState[i] && !this._reattachAnimations[i]) {
-            delete this._particleSpinState[i];
-            delete this._particleSpinTargetLevel[i];
-          }
-        }
-      }
-
-      // --- Animate spinning and reattaching for detached particles (Z axis only) ---
       let now = performance.now();
-      let anyReattaching = false;
-      // Easing function for ease-in (cubic)
-      function easeInCubic(t) { return t * t * t; }
       const SPIN_EASE_DURATION = Scene.SPIN_EASE_DURATION;
-
-      // Prepare per-shape instance index
+      function easeInCubic(t) { return t * t * t; }
       const shapeCounts = Array(Scene.PARTICLE_SHAPE_COUNT).fill(0);
-      for (let i = 0; i < count; i++) shapeCounts[this._particleShapeIndices[i]]++;
+      for (let i = 0; i < this.particles.length; i++) shapeCounts[this.particles[i].meshIdx]++;
       const instanceIndices = Array(Scene.PARTICLE_SHAPE_COUNT).fill(0);
-
-      // For color fading
-    //   const targetRed = new THREE.Color(1.0, 0.0, 56/255);
       const targetRed = new THREE.Color(Scene.CUBE_COLOR);
       const white = new THREE.Color(1, 1, 1);
 
-      // For each particle, update its instance matrix and color
-      // Reset detach animation state for all particles that are not detached this frame
-      if (!this._detachAnimations) this._detachAnimations = {};
-      if (!this._detachAnimationCompleted) this._detachAnimationCompleted = {};
-      for (let i = 0; i < count; i++) {
-        if (!detachedSet.has(i)) {
-          if (this._detachAnimations[i]) delete this._detachAnimations[i];
-          if (this._detachAnimationCompleted[i]) delete this._detachAnimationCompleted[i];
+      // Detach and animate particles, and handle reattachment
+      for (let i = 0; i < this.particles.length; i++) {
+        const p = this.particles[i];
+        // DETACH: If garment type matches any detached garment up to current step
+        if (detachedGarmentTypes.has(p.garmentType)) {
+          if (!p.isDetached) {
+            p.isDetached = true;
+            p.detachmentStep = this.currentLevel;
+            // Generate spherical target only once
+            if (!p.detachmentTarget) {
+              const detachmentScale = Math.min(this.currentLevel + 1, Scene.DETACHMENT_SCALE_MAX);
+              p.detachmentTarget = this._generateSphericalDetachTargets(this.currentLevel, 1, detachmentScale)[0];
+            }
+            p.animationState = 'detaching';
+            p.spinState = null;
+            p.reattachAnimStart = null;
+          }
+        } else {
+          // REATTACH: If particle was previously detached, but is no longer in detached set
+          if (p.isDetached && p.animationState !== 'reattaching') {
+            p.animationState = 'reattaching';
+            p.reattachAnimStart = null;
+            // Record current position as reattachFrom
+            if (p.spinState) {
+              // If spinning, calculate current position from spherical coordinates
+              const s = p.spinState;
+              const r = s.r, phi = s.phi, theta = s.theta;
+              const x = r * Math.sin(phi) * Math.cos(theta);
+              const y = r * Math.cos(phi);
+              const z = r * Math.sin(phi) * Math.sin(theta);
+              p.reattachFrom = [x, y, z];
+            } else if (p.detachmentTarget) {
+              p.reattachFrom = p.detachmentTarget.slice();
+            } else {
+              p.reattachFrom = p.initialPosition.slice();
+            }
+          }
         }
       }
 
-      for (let i = 0; i < count; i++) {
-        const shape = this._particleShapeIndices[i];
-        const mesh = this._particleMeshes[shape];
-        const idx = instanceIndices[shape];
+      // Animate, spin, and reattach particles
+      for (let i = 0; i < this.particles.length; i++) {
+        const p = this.particles[i];
+        const mesh = this._particleMeshes[p.meshIdx];
+        const idx = instanceIndices[p.meshIdx];
         let matrix = new THREE.Matrix4();
         let color = new THREE.Color();
-        if (detachedSet.has(i)) {
-          // Animate detached particles to their target position (spherical shell)
-          let s = this._particleSpinState[i];
-          let detachTarget = this._sphericalDetachTargets[this.currentLevel][i] || [0, 0, 0];
-          // If spinning, animate in orbit; else, animate to target
-          if (s) {
+        if (p.animationState === 'reattaching') {
+          if (!p.reattachAnimStart) p.reattachAnimStart = now;
+          const t = Math.min((now - p.reattachAnimStart) / Scene.PARTICLE_REATTACH_DURATION, 1);
+          const easeInCubic = t => t * t * t;
+          const easedT = easeInCubic(t);
+          const from = p.reattachFrom || p.initialPosition;
+          const to = p.initialPosition;
+          const x = from[0] + (to[0] - from[0]) * easedT;
+          const y = from[1] + (to[1] - from[1]) * easedT;
+          const z = from[2] + (to[2] - from[2]) * easedT;
+          matrix.makeTranslation(x, y, z);
+          color.copy(white).lerp(targetRed, 1 - easedT);
+          if (t >= 1) {
+            // Reset to attached state
+            p.isDetached = false;
+            p.animationState = null;
+            p.spinState = null;
+            p.detachmentTarget = null;
+            p.reattachAnimStart = null;
+            p.reattachFrom = null;
+            p.detachAnimStart = null; // <-- Ensure detachment animation is reset after reattachment
+          }
+        } else if (p.isDetached) {
+          if (p.animationState === 'detaching') {
+            if (!p.detachAnimStart) p.detachAnimStart = now;
+            const t = Math.min((now - p.detachAnimStart) / Scene.PARTICLE_DETACH_DURATION, 1);
+            const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+            const easedT = easeOutCubic(t);
+            const from = p.initialPosition;
+            const to = p.detachmentTarget;
+            const x = from[0] + (to[0] - from[0]) * easedT;
+            const y = from[1] + (to[1] - from[1]) * easedT;
+            const z = from[2] + (to[2] - from[2]) * easedT;
+            matrix.makeTranslation(x, y, z);
+            color.copy(white);
+            if (t >= 1) {
+              p.animationState = 'spinning';
+              // Store spherical coordinates for true spherical spinning
+              const [tx, ty, tz] = [x, y, z];
+              const r = Math.sqrt(tx * tx + ty * ty + tz * tz);
+              let theta = Math.atan2(tz, tx); // azimuthal
+              let phi = Math.acos(ty / r);    // polar
+              p.spinState = {
+                theta,
+                phi,
+                dTheta: Scene.SHARED_ORBIT_DTHETA,
+                dPhi: Scene.SHARED_ORBIT_DTHETA * 0.5, // slower polar rotation
+                r,
+                base: [tx, ty, tz],
+                spinStartTime: now
+              };
+            }
+          } else if (p.animationState === 'spinning' && p.spinState) {
+            let s = p.spinState;
             if (!s.spinStartTime) s.spinStartTime = now;
             let spinElapsed = now - s.spinStartTime;
             let ease = 1.0;
             if (spinElapsed < SPIN_EASE_DURATION) {
               ease = easeInCubic(Math.min(spinElapsed / SPIN_EASE_DURATION, 1));
             }
+            // True spherical spin: only update theta, keep phi and r constant
             s.theta += s.dTheta * ease;
-            const x = s.orbitRadius * Math.cos(s.theta);
-            const z = s.orbitRadius * Math.sin(s.theta);
-            const y = s.y;
+            const r = s.r;
+            const phi = s.phi;
+            const theta = s.theta;
+            // Spherical coordinates to Cartesian
+            const x = r * Math.sin(phi) * Math.cos(theta);
+            const y = r * Math.cos(phi);
+            const z = r * Math.sin(phi) * Math.sin(theta);
             matrix.makeTranslation(x, y, z);
-            // Fade color to red
             color.copy(white).lerp(targetRed, ease);
-          } else {
-            // Animate from mesh position to detach target
-            if (!this._detachAnimations[i]) {
-              this._detachAnimations[i] = {
-                from: [this._meshPositions[i*3], this._meshPositions[i*3+1], this._meshPositions[i*3+2]],
-                to: detachTarget,
-                start: now,
-                duration: 1200
-              };
-            }
-            let anim = this._detachAnimations[i];
-            const t = Math.min((now - anim.start) / anim.duration, 1);
-            const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
-            const easedT = easeOutCubic(t);
-            const from = anim.from;
-            const to = anim.to;
-            const x = from[0] + (to[0] - from[0]) * easedT;
-            const y = from[1] + (to[1] - from[1]) * easedT;
-            const z = from[2] + (to[2] - from[2]) * easedT;
-            matrix.makeTranslation(x, y, z);
-            // No color transition during detachment animation; always white
-            color.copy(white);
-            if (t >= 1) {
-              this._detachAnimationCompleted[i] = true;
-              delete this._detachAnimations[i];
-            }
-          }
-        } else if (this._reattachAnimations[i]) {
-          // If reattaching, clear detach animation state
-          if (this._detachAnimations[i]) delete this._detachAnimations[i];
-          if (this._detachAnimationCompleted[i]) delete this._detachAnimationCompleted[i];
-          // If reattaching, clear detach animation state
-          if (this._detachAnimations && this._detachAnimations[i]) delete this._detachAnimations[i];
-          if (this._detachAnimationCompleted && this._detachAnimationCompleted[i]) delete this._detachAnimationCompleted[i];
-          anyReattaching = true;
-          const anim = this._reattachAnimations[i];
-          const t = Math.min((now - anim.start) / anim.duration, 1);
-          const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
-          const easedT = easeOutCubic(t);
-          const from = anim.from;
-          const to = anim.to;
-          const x = from[0] + (to[0] - from[0]) * easedT;
-          const y = from[1] + (to[1] - from[1]) * easedT;
-          const z = from[2] + (to[2] - from[2]) * easedT;
-          matrix.makeTranslation(x, y, z);
-          // Fade color back to white
-          color.copy(targetRed).lerp(white, easedT);
-          if (t >= 1) {
-            delete this._reattachAnimations[i];
-            if (this._particleSpinState[i]) delete this._particleSpinState[i];
-            if (this._particleSpinTargetLevel[i]) delete this._particleSpinTargetLevel[i];
           }
         } else {
-          // Not spinning or reattaching: use mesh position and white color
-          const x = this._meshPositions[i*3];
-          const y = this._meshPositions[i*3+1];
-          const z = this._meshPositions[i*3+2];
+          const x = p.initialPosition[0];
+          const y = p.initialPosition[1];
+          const z = p.initialPosition[2];
           matrix.makeTranslation(x, y, z);
           color.copy(white);
         }
         mesh.setMatrixAt(idx, matrix);
         mesh.setColorAt(idx, color);
-        instanceIndices[shape]++;
+        instanceIndices[p.meshIdx]++;
       }
-      // Mark all instance matrices/colors as needing update
       for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
         this._particleMeshes[shape].instanceMatrix.needsUpdate = true;
         if (this._particleMeshes[shape].instanceColor) this._particleMeshes[shape].instanceColor.needsUpdate = true;
       }
-      this._reattachAnimationActive = anyReattaching;
+      // No reattachment logic in this pass (can be added for backward navigation)
+
+      // --- Legacy reattachment and spin state logic removed: all per-particle state is handled above ---
     } else {
       // If not spinning, clear spin state
       this._particleSpinState = null;
@@ -1160,6 +1144,19 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
         animate();
       });
       this._isMorphingToIntro = false;
+      // Reset all per-particle state after morphing to intro
+      if (this.particles) {
+        for (let i = 0; i < this.particles.length; i++) {
+          const p = this.particles[i];
+          p.isDetached = false;
+          p.animationState = null;
+          p.spinState = null;
+          p.detachmentTarget = null;
+          p.reattachAnimStart = null;
+          p.reattachFrom = null;
+          p.detachAnimStart = null;
+        }
+      }
       if (timelineOverlay) {
         timelineOverlay.style.transition = 'opacity 0.7s';
         timelineOverlay.style.opacity = '0';
@@ -1331,7 +1328,7 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
     const data = this.timeline[level];
     // Map data to expected fields for overlay
     window.updateTimelineOverlay({
-      year: (data.year !== undefined ? data.year : (data.age !== undefined ? data.age : '')),
+      year: (data.year !== undefined ? data.year : (data.garment !== undefined ? data.garment : '')),
       contaminationRate: (typeof data.items_consumed === 'number' ? data.items_consumed : 0),
       description: (data.label !== undefined && data.label !== '' ? data.label : (data.description !== undefined ? data.description : '')),
       show: true,
