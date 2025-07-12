@@ -2,9 +2,10 @@
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap');
 :root {
-  --contaminated-red: #FF0138;
+  --contaminated-red: #ff0138;
   --chalk-white: #efefef;
   --ghost-white: #ffffff7a;
+  --crude-black: #1E1628;
 }
 /* Hide scrollbar for Chrome, Safari and Opera */
 body::-webkit-scrollbar {
@@ -183,7 +184,7 @@ a.visited {
   grid-template-columns: 1fr;
   align-items: center;
   justify-items: center;
-  background: rgba(0,0,0,0.92);
+  background: #181A1Ee6;
   opacity: 1;
   pointer-events: auto;
 }
@@ -194,7 +195,7 @@ a.visited {
 #intro-overlay h1, #outro-overlay h1 {
   color: var(--contaminated-red);
   margin: 0 0 1.2rem 0;
-  text-shadow: 0 2px 16px #000, 0 0 2px #FF0138;
+  /* text-shadow: 0 2px 16px #000, 0 0 2px #FF0138; */
   opacity: 0;
   animation: fadeIn 0.8s forwards;
 }

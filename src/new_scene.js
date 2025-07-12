@@ -2,6 +2,82 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 export class Scene {
+  // ---- Centralized Constants ----
+  static PARTICLE_SHAPE_COUNT = 5; // Number of mesh shapes (now matches mesh files)
+  static PARTICLE_TARGET_SIZE = 0.09;
+  static PARTICLE_MIN_WIDTH = 0.06;
+  static PARTICLE_MIN_DEPTH = 0.045;
+  static PARTICLE_DETACH_DURATION = 1200;
+  static PARTICLE_REATTACH_DURATION = 1200;
+  static CAMERA_ANIM_DURATION = 900;
+  static SPIN_EASE_DURATION = 900;
+  static SHARED_ORBIT_DTHETA = 0.004;
+  static DETACHMENT_SCALE_MAX = 3;
+  static CUBE_COLOR = 0x3C414A;
+  static OVERLAY_FADE_DURATION = 700;
+  static OUTRO_FADE_DURATION = 800;
+  static SWIPE_THRESHOLD = 60;
+  static INTRO_FADE_DURATION = 700;
+  static MORPH_DURATION = 2000;
+  static POINT_SIZE = 0.1;
+  /**
+   * Generate spherical detachment targets for a timeline step.
+   * @param {number} step - Timeline step index
+   * @param {number} count - Number of particles
+   * @param {number} detachmentScale - Scale factor for shell radius
+   * @returns {Array<[number, number, number]>} Array of [x, y, z] positions
+   */
+  _generateSphericalDetachTargets(step, count, detachmentScale) {
+    const targets = [];
+    for (let i = 0; i < count; i++) {
+      const randomFactor = 1 + (Math.random() - 0.5) * 0.2;
+      const r = detachmentScale * randomFactor;
+      const u = Math.random();
+      const v = Math.random();
+      const theta = 2 * Math.PI * u;
+      const phi = Math.acos(2 * v - 1);
+      const sx = r * Math.sin(phi) * Math.cos(theta);
+      const sy = r * Math.sin(phi) * Math.sin(theta);
+      const sz = r * Math.cos(phi);
+      targets[i] = [sx, sy, sz];
+    }
+    return targets;
+  }
+  // Helper to reset typewriter animation
+  _resetTypewriterAnimation() {
+    if (typeof window.resetTypewriterAnimation === 'function') {
+      window.resetTypewriterAnimation();
+    }
+  }
+  // Helper to show overlay with fade-in
+  _showOverlay(overlay, { display = '', opacity = '1', duration = 700 } = {}) {
+    if (!overlay) return;
+    overlay.style.display = display;
+    void overlay.offsetWidth;
+    overlay.style.transition = `opacity ${duration / 1000}s`;
+    overlay.style.opacity = opacity;
+    overlay.style.pointerEvents = 'auto';
+  }
+
+  // Helper to hide overlay with fade-out
+  _hideOverlay(overlay, { display = 'none', opacity = '0', duration = 700 } = {}) {
+    if (!overlay) return;
+    overlay.style.transition = `opacity ${duration / 1000}s`;
+    overlay.style.opacity = opacity;
+    overlay.style.pointerEvents = 'none';
+    setTimeout(() => {
+      overlay.style.display = display;
+    }, duration);
+  }
+  // Helper to initialize and shuffle detachment indices
+  _initDetachmentIndices() {
+    const count = this._instancedParticleCount;
+    this._detachmentIndices = Array.from({ length: count }, (_, i) => i);
+    for (let i = this._detachmentIndices.length - 1; i > 0; i--) {
+      const j = Math.floor(i * 1337 % (i + 1));
+      [this._detachmentIndices[i], this._detachmentIndices[j]] = [this._detachmentIndices[j], this._detachmentIndices[i]];
+    }
+  }
   constructor() {
     // Always hide outro overlay on startup to prevent flash
     const outro = document.getElementById('outro-overlay');
@@ -38,17 +114,122 @@ export class Scene {
     this.timeline = [];
     this.totalItems = 0;
     this.meshObj = null;
-    this.loadAssets().then(() => {
-      // Show mesh as points for intro (human made of particles)
-      this.showMeshAsPoints();
-      this.showInitialCloud(); // Generate cloud positions for morphing
-      this.totalItems = this.timeline.length > 0 ? this.timeline[this.timeline.length - 1].items_consumed : 1;
-      this.setupNavigation();
-      this.updateTimelineOverlay(-1); // Hide overlay initially
-      if (this.preloader) this.preloader.remove();
-      console.log('Assets loaded and mesh displayed');
+    // Preload particle meshes before app initialization
+    this._particleMeshFiles = [
+      'tee.glb',
+      'shirt.glb',
+      'pants.glb',
+      'sneaks.glb',
+      'sweat.glb'
+    ];
+    this._particleMeshGeometries = [];
+    this.preloadParticleMeshes().then(() => {
+      this.loadAssets().then(() => {
+        // Show mesh as points for intro (human made of particles)
+        this.showMeshAsPoints();
+        this.showInitialCloud(); // Generate cloud positions for morphing
+        this.totalItems = this.timeline.length > 0 ? this.timeline[this.timeline.length - 1].items_consumed : 1;
+        this.setupNavigation();
+        this.updateTimelineOverlay(-1); // Hide overlay initially
+        if (this.preloader) this.preloader.remove();
+        console.log('Assets loaded and mesh displayed');
+      });
     });
     this.animate();
+  }
+
+  // Helper to fade overlays
+  async _fadeOverlay(overlay, { opacity, display, duration = 700 }) {
+    if (!overlay) return;
+    overlay.style.transition = `opacity ${duration / 1000}s`;
+    overlay.style.opacity = opacity;
+    if (display !== undefined) {
+      setTimeout(() => { overlay.style.display = display; }, duration);
+    }
+    // Wait for fade out if opacity is 0
+    if (opacity === '0') {
+      await new Promise(res => setTimeout(res, duration));
+    }
+  }
+
+  // Helper to set camera animation
+  _setCameraAnim(from, to, duration = 900) {
+    this._cameraAnim = {
+      from: { ...from },
+      to: { ...to },
+      start: performance.now(),
+      duration,
+      active: true
+    };
+  }
+
+  // Preload GLB meshes for 3D particles
+  async preloadParticleMeshes() {
+    const loader = new GLTFLoader();
+    const meshDir = 'assets/models/';
+    const files = this._particleMeshFiles;
+    this._particleMeshGeometries = [];
+    console.log('[Mesh Preloader] Preloading particle meshes:', files);
+    for (let i = 0; i < files.length; i++) {
+      try {
+        const gltf = await new Promise((resolve, reject) => {
+          loader.load(meshDir + files[i], resolve, undefined, reject);
+        });
+        let meshGeom = null;
+        gltf.scene.traverse((child) => {
+          if (child.isMesh && child.geometry && !meshGeom) meshGeom = child.geometry.clone();
+        });
+        if (meshGeom) {
+          // Center geometry
+          meshGeom.computeBoundingBox();
+          const bbox = meshGeom.boundingBox;
+          const center = new THREE.Vector3();
+          bbox.getCenter(center);
+          meshGeom.translate(-center.x, -center.y, -center.z);
+          // Uniform scale to fit within a slightly larger box (0.09)
+          const size = new THREE.Vector3();
+          bbox.getSize(size);
+          const maxDim = Math.max(size.x, size.y, size.z);
+          const targetSize = Scene.PARTICLE_TARGET_SIZE;
+          let scale = maxDim > 0 ? targetSize / maxDim : 1;
+          meshGeom.scale(scale, scale, scale);
+          // --- Hybrid scaling: ensure minimum width/depth ---
+          meshGeom.computeBoundingBox();
+          const bbox2 = meshGeom.boundingBox;
+          const minWidth = Scene.PARTICLE_MIN_WIDTH;
+          const minDepth = Scene.PARTICLE_MIN_DEPTH;
+          const size2 = new THREE.Vector3();
+          bbox2.getSize(size2);
+          let rescale = 1;
+          if (size2.x < minWidth || size2.z < minDepth) {
+            // Find the factor needed to bring the smallest axis up to threshold
+            const scaleX = size2.x < minWidth ? minWidth / size2.x : 1;
+            const scaleZ = size2.z < minDepth ? minDepth / size2.z : 1;
+            rescale = Math.max(scaleX, scaleZ);
+            meshGeom.scale(rescale, rescale, rescale);
+            meshGeom.computeBoundingBox();
+          }
+          // Rotate 90 degrees on X axis, then 90 degrees on Y axis
+          const rotMatrixX = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+          const rotMatrixY = new THREE.Matrix4().makeRotationY(Math.PI / 2);
+          // Additional: rotate -45deg on Y axis (clockwise)
+          const rotMatrixYNeg45 = new THREE.Matrix4().makeRotationY(-Math.PI / 4);
+          meshGeom.applyMatrix4(rotMatrixX);
+          meshGeom.applyMatrix4(rotMatrixY);
+          meshGeom.applyMatrix4(rotMatrixYNeg45);
+          meshGeom.computeBoundingBox();
+          this._particleMeshGeometries.push(meshGeom);
+          console.log(`[Mesh Preloader] Loaded, normalized, rotated: ${files[i]}`);
+        } else {
+          this._particleMeshGeometries.push(new THREE.BoxGeometry(Scene.PARTICLE_MIN_WIDTH, Scene.PARTICLE_MIN_WIDTH, Scene.PARTICLE_MIN_WIDTH));
+          console.warn(`[Mesh Preloader] Mesh not found in GLB: ${files[i]}`);
+        }
+      } catch (err) {
+        console.error('[Mesh Preloader] Failed to load particle mesh:', files[i], err);
+        this._particleMeshGeometries.push(new THREE.BoxGeometry(0.07, 0.07, 0.07));
+      }
+    }
+    console.log('[Mesh Preloader] All particle meshes preloaded:', this._particleMeshGeometries.length);
   }
 
   // Show mesh as points (for intro: human made of particles)
@@ -63,88 +244,98 @@ export class Scene {
       this.points.material.dispose();
       this.points = null;
     }
+    // Remove previous instanced meshes if any
+    if (this._particleMeshes) {
+      for (const mesh of this._particleMeshes) {
+        this.scene.remove(mesh);
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+      }
+    }
     if (!this._meshPositions) return;
-    // Create points geometry from mesh positions
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(this._meshPositions, 3));
-    // Add color attribute for RGBA (for depth of field alpha)
-    const colors = new Float32Array(this._meshPositions.length / 3 * 4);
-    for (let i = 0; i < this._meshPositions.length / 3; i++) {
-      colors[i * 4 + 0] = 1.0; // r
-      colors[i * 4 + 1] = 1.0; // g
-      colors[i * 4 + 2] = 1.0; // b
-      colors[i * 4 + 3] = 1.0; // a (will be updated per frame)
-    }
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
-
-
-    // Add per-particle shape index attribute (0-15, for 16 shapes in 4x4 grid)
-    const count = this._meshPositions.length / 3;
-    const shapeIndices = new Float32Array(count);
-    for (let i = 0; i < count; i++) {
-      shapeIndices[i] = Math.floor(Math.random() * 16); // 0-15
-    }
-    geometry.setAttribute('shapeIndex', new THREE.BufferAttribute(shapeIndices, 1));
-
-    // Load the garments texture (only load once)
-    if (!this._garmentsTexture) {
-      this._garmentsTexture = await new Promise((resolve, reject) => {
-        new THREE.TextureLoader().load('assets/masks/garments.png', resolve, undefined, reject);
-      });
-      this._garmentsTexture.minFilter = THREE.LinearMipMapLinearFilter;
-      this._garmentsTexture.magFilter = THREE.LinearFilter;
-      this._garmentsTexture.generateMipmaps = true;
-      this._garmentsTexture.needsUpdate = true;
-    }
-
-    // Custom shader for 4x4 grid-based particle masking
-    const vertexShader = `
-      attribute float shapeIndex;
-      varying vec4 vColor;
-      varying float vShapeIndex;
-      void main() {
-        vColor = color;
-        vShapeIndex = shapeIndex;
-        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-        gl_Position = projectionMatrix * mvPosition;
-        // Point size scaling for perspective
-        gl_PointSize = 0.6 * 100.0 / -mvPosition.z;
+    // --- InstancedMesh version: use preloaded GLB meshes for particles ---
+    let geometries;
+    if (this._particleMeshGeometries && this._particleMeshGeometries.length === Scene.PARTICLE_SHAPE_COUNT) {
+      geometries = this._particleMeshGeometries;
+    } else {
+      // Fallback: fill with primitives for missing meshes
+      geometries = [];
+      for (let i = 0; i < Scene.PARTICLE_SHAPE_COUNT; i++) {
+        if (this._particleMeshGeometries && this._particleMeshGeometries[i]) {
+          geometries.push(this._particleMeshGeometries[i]);
+        } else {
+          // Use different primitive for each missing mesh
+          if (i % 3 === 0) {
+            geometries.push(new THREE.BoxGeometry(Scene.PARTICLE_MIN_WIDTH, Scene.PARTICLE_MIN_WIDTH, Scene.PARTICLE_MIN_WIDTH));
+          } else if (i % 3 === 1) {
+            geometries.push(new THREE.SphereGeometry(Scene.PARTICLE_MIN_DEPTH, 8, 8));
+          } else {
+            geometries.push(new THREE.ConeGeometry(Scene.PARTICLE_MIN_WIDTH, Scene.PARTICLE_TARGET_SIZE, 4));
+          }
+        }
       }
-    `;
-
-    const fragmentShader = `
-      uniform sampler2D atlas;
-      varying vec4 vColor;
-      varying float vShapeIndex;
-      void main() {
-        // 4x4 grid: idx 0 = (0,0), 1 = (1,0), ..., 15 = (3,3)
-        float idx = vShapeIndex;
-        float u = mod(idx, 4.0);
-        float v = floor(idx / 4.0);
-        // Each shape is 0.25x0.25 in UV space
-        // Flip Y to rotate 180 degrees
-        vec2 atlasUV = vec2(gl_PointCoord.x, 1.0 - gl_PointCoord.y);
-        atlasUV = atlasUV * 0.25 + vec2(u * 0.25, v * 0.25);
-        float mask = texture2D(atlas, atlasUV).a;
-        if (mask < 0.1) discard;
-        gl_FragColor = vec4(vColor.rgb, vColor.a * mask);
-      }
-    `;
-
-    const material = new THREE.ShaderMaterial({
-      uniforms: {
-        atlas: { value: this._garmentsTexture },
-      },
-      vertexShader,
-      fragmentShader,
-      transparent: true,
-      vertexColors: true,
-      depthTest: true,
-      depthWrite: false,
+    }
+    const baseMaterial = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.5,
+      metalness: 0.1
     });
-
-    this.points = new THREE.Points(geometry, material);
-    this.scene.add(this.points);
+    const count = this._meshPositions.length / 3;
+    // Assign a random shape to each particle
+    this._particleShapeIndices = [];
+    for (let i = 0; i < count; i++) {
+      this._particleShapeIndices[i] = Math.floor(Math.random() * Scene.PARTICLE_SHAPE_COUNT);
+    }
+    // Count per shape
+    const shapeCounts = Array(Scene.PARTICLE_SHAPE_COUNT).fill(0);
+    for (let i = 0; i < count; i++) shapeCounts[this._particleShapeIndices[i]]++;
+    // Create InstancedMeshes
+    this._particleMeshes = [];
+    for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
+      const mesh = new THREE.InstancedMesh(geometries[shape], baseMaterial.clone(), shapeCounts[shape]);
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.scene.add(mesh);
+      this._particleMeshes.push(mesh);
+    }
+    // Store mapping: for each shape, which instance index is which particle
+    this._particleInstanceMap = Array(Scene.PARTICLE_SHAPE_COUNT).fill().map(() => []);
+    const instanceIndices = Array(Scene.PARTICLE_SHAPE_COUNT).fill(0);
+    for (let i = 0; i < count; i++) {
+      const shape = this._particleShapeIndices[i];
+      this._particleInstanceMap[shape][instanceIndices[shape]] = i;
+      instanceIndices[shape]++;
+    }
+    // Set initial transforms and colors
+    for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
+      let mesh = this._particleMeshes[shape];
+      let idx = 0;
+      for (let i = 0; i < count; i++) {
+        if (this._particleShapeIndices[i] !== shape) continue;
+        const x = this._meshPositions[i * 3];
+        const y = this._meshPositions[i * 3 + 1];
+        const z = this._meshPositions[i * 3 + 2];
+        const matrix = new THREE.Matrix4().makeTranslation(x, y, z);
+        mesh.setMatrixAt(idx, matrix);
+        mesh.setColorAt(idx, new THREE.Color(1, 1, 1));
+        idx++;
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
+    // Store for animation loop
+    this.points = null; // No longer using Points
+    this._instancedParticleCount = count;
+    this._instancedMeshesReady = true;
+    // Lighting (add a soft ambient and directional if not present)
+    if (!this._particleLight) {
+      this._particleLight = new THREE.AmbientLight(0xffffff, 0.7);
+      this.scene.add(this._particleLight);
+      this._particleDirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+      this._particleDirLight.position.set(2, 4, 2);
+      this.scene.add(this._particleDirLight);
+    }
   }
 
   // End of constructor's .then()
@@ -172,19 +363,33 @@ export class Scene {
       this.mesh.scene.traverse((child) => {
         if (child.isMesh && child.geometry && !this.meshObj) this.meshObj = child;
       });
-      if (this.meshObj) {
+      if (
+        this.meshObj &&
+        this.meshObj.geometry &&
+        this.meshObj.geometry.attributes &&
+        this.meshObj.geometry.attributes.position &&
+        this.meshObj.geometry.attributes.position.array
+      ) {
         const meshPositions = this.meshObj.geometry.attributes.position.array;
         this._meshPositions = [];
-        for (let i = 0; i < 1500; i++) {
+        // Determine number of particles from timeline data
+        // Always set particleCount to the total of items_consumed in the timeline (if available)
+        let particleCount = 1500;
+        if (this.timeline && this.timeline.length > 0) {
+          particleCount = this.timeline.reduce((sum, t) => sum + (t.items_consumed || 0), 0);
+        }
+        for (let i = 0; i < particleCount; i++) {
           const idx = (i * 3) % meshPositions.length;
           this._meshPositions.push(meshPositions[idx], meshPositions[idx + 1], meshPositions[idx + 2]);
         }
-        
+      } else {
+        console.error('GLB mesh does not have geometry/position data');
       }
     } catch (error) {
       console.error('Failed to load human.glb mesh:', error);
     }
   }
+
 
   initScene() {
     // Renderer setup
@@ -197,7 +402,7 @@ export class Scene {
       this.renderer = new THREE.WebGLRenderer({ antialias: true, canvas: document.getElementById('three-canvas') });
       this.renderer.setSize(window.innerWidth, window.innerHeight);
     }
-this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you want
+this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you want
     // Scene and camera setup
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -281,7 +486,7 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
       colors[i * 4 + 3] = 1.0;
     }
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
-    const material = new THREE.PointsMaterial({ size: 0.1, vertexColors: true, transparent: true });
+    const material = new THREE.PointsMaterial({ size: Scene.POINT_SIZE, vertexColors: true, transparent: true });
     this.points = new THREE.Points(geometry, material);
     this.scene.add(this.points);
     // Animate mesh points to cloud positions
@@ -315,7 +520,7 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
   }
 
   animateMorph(start, end, positions, onComplete) {
-    const duration = 2000;
+    const duration = Scene.MORPH_DURATION;
     const startTime = performance.now();
     const animate = () => {
       const elapsed = performance.now() - startTime;
@@ -365,10 +570,10 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
       this.camera.position.y = this._cameraAnim.from.y + (this._cameraAnim.to.y - this._cameraAnim.from.y) * t;
       this.camera.position.z = this._cameraAnim.from.z + (this._cameraAnim.to.z - this._cameraAnim.from.z) * t;
       this.camera.lookAt(0, 0, 0);
-      console.log('[animate] Camera animating. t:', t.toFixed(3), 'from:', this._cameraAnim.from, 'to:', this._cameraAnim.to, 'current:', {x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z});
+      // console.log('[animate] Camera animating. t:', t.toFixed(3), 'from:', this._cameraAnim.from, 'to:', this._cameraAnim.to, 'current:', {x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z});
       if (t >= 1) {
         this._cameraAnim.active = false;
-        console.log('[animate] Camera animation complete. Final position:', {x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z});
+        // console.log('[animate] Camera animation complete. Final position:', {x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z});
       }
     }
     // If not animating, just set to target
@@ -379,14 +584,14 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
       this.camera.lookAt(0, 0, 0);
     }
 
-    // --- Per-particle spinning for detached particles (option 1) ---
-    if (this._isMorphingToIntro) {
-      // Skip per-particle logic during morph to intro
-    } else if (this.points && this._detachmentIndices && this.timeline && this.currentLevel >= 0) {
+    // --- Per-particle spinning for detached particles (InstancedMesh version) ---
+    if (this._isMorphingToIntro || this._isMorphingDetach) {
+      // Skip per-particle logic during morph to intro or detachment animation
+    } else if (this._particleMeshes && this._detachmentIndices && this.timeline && this.currentLevel >= 0) {
       // Determine which particles are detached at this level
       const data = this.timeline[this.currentLevel];
       const percent = data && this.totalItems ? (data.items_consumed / this.totalItems) : 0;
-      const count = this.points.geometry.attributes.position.count;
+      const count = this._instancedParticleCount;
       const detachCount = Math.floor(count * percent);
       const detachedSet = new Set(this._detachmentIndices.slice(0, detachCount));
 
@@ -407,19 +612,15 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
         const shouldSpin = detachedSet.has(i);
         if (wasSpinning && !shouldSpin && !this._reattachAnimations[i]) {
           // Start reattach animation for this particle
-          // Always use the current spinning position as the start
           let from;
           if (this._particleSpinState[i]) {
-            // Compute current spinning position
             const s = this._particleSpinState[i];
             const x = s.orbitRadius * Math.cos(s.theta);
             const z = s.orbitRadius * Math.sin(s.theta);
             const y = s.y;
             from = [x, y, z];
           } else {
-            // Fallback: use current buffer position
-            const positions = this.points.geometry.attributes.position;
-            from = [positions.getX(i), positions.getY(i), positions.getZ(i)];
+            from = [this._meshPositions[i*3], this._meshPositions[i*3+1], this._meshPositions[i*3+2]];
           }
           const to = [this._meshPositions[i*3], this._meshPositions[i*3+1], this._meshPositions[i*3+2]];
           this._reattachAnimations[i] = {
@@ -428,15 +629,14 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
             start: performance.now(),
             duration: 1200
           };
-          // Do NOT remove spin state here; let it be removed only after reattach animation completes
         }
       }
 
       // --- Initialize per-particle spin state only for newly detached particles ---
       for (let i = 0; i < count; i++) {
         if (detachedSet.has(i)) {
-          // Only initialize if not already spinning
-          if (!this._particleSpinState[i]) {
+          // Only initialize spin state if not already spinning, and only after detachment animation is complete
+          if (!this._particleSpinState[i] && !this._detachAnimations[i] && this._detachAnimationCompleted && this._detachAnimationCompleted[i]) {
             // Use the detached target as the base position
             const [x, y, z] = this._sphericalDetachTargets[this.currentLevel][i] || [0, 0, 0];
             // Calculate radius in XZ plane from origin
@@ -467,50 +667,95 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
       }
 
       // --- Animate spinning and reattaching for detached particles (Z axis only) ---
-      const positions = this.points.geometry.attributes.position;
       let now = performance.now();
       let anyReattaching = false;
       // Easing function for ease-in (cubic)
       function easeInCubic(t) { return t * t * t; }
-      const SPIN_EASE_DURATION = 900; // ms, how long the ease-in lasts
-      for (let i = 0; i < count; i++) {
-        if (detachedSet.has(i) && this._particleSpinState[i]) {
-          let s = this._particleSpinState[i];
-          // Track when spinning started
-          if (!s.spinStartTime) s.spinStartTime = now;
-          let spinElapsed = now - s.spinStartTime;
-          let ease = 1.0;
-          if (spinElapsed < SPIN_EASE_DURATION) {
-            ease = easeInCubic(Math.min(spinElapsed / SPIN_EASE_DURATION, 1));
-          }
-          // Increment angle for spinning with ease-in
-          s.theta += s.dTheta * ease;
-          // Spin around Y axis, keep y fixed, radius is fixed from detachment
-          const x = s.orbitRadius * Math.cos(s.theta);
-          const z = s.orbitRadius * Math.sin(s.theta);
-          const y = s.y;
-          positions.setXYZ(i, x, y, z);
+      const SPIN_EASE_DURATION = Scene.SPIN_EASE_DURATION;
 
-          // --- Fade color to custom red as particle starts spinning ---
-          // Use ease as the fade-in factor (0=start, 1=fully spinning)
-          const colors = this.points.geometry.attributes.color;
-          // Fade from white (1,1,1) to red (213/255,0,11/255)
-          const targetR = 255 / 255;
-          const targetG = 0.0;
-          const targetB = 56 / 255;
-          const r = 1.0 + (targetR - 1.0) * ease;
-          const g = 1.0 + (targetG - 1.0) * ease;
-          const b = 1.0 + (targetB - 1.0) * ease;
-          // Keep alpha as is (will be set in DoF section)
-          colors.setX(i, r);
-          colors.setY(i, g);
-          colors.setZ(i, b);
+      // Prepare per-shape instance index
+      const shapeCounts = Array(Scene.PARTICLE_SHAPE_COUNT).fill(0);
+      for (let i = 0; i < count; i++) shapeCounts[this._particleShapeIndices[i]]++;
+      const instanceIndices = Array(Scene.PARTICLE_SHAPE_COUNT).fill(0);
+
+      // For color fading
+    //   const targetRed = new THREE.Color(1.0, 0.0, 56/255);
+      const targetRed = new THREE.Color(Scene.CUBE_COLOR);
+      const white = new THREE.Color(1, 1, 1);
+
+      // For each particle, update its instance matrix and color
+      // Reset detach animation state for all particles that are not detached this frame
+      if (!this._detachAnimations) this._detachAnimations = {};
+      if (!this._detachAnimationCompleted) this._detachAnimationCompleted = {};
+      for (let i = 0; i < count; i++) {
+        if (!detachedSet.has(i)) {
+          if (this._detachAnimations[i]) delete this._detachAnimations[i];
+          if (this._detachAnimationCompleted[i]) delete this._detachAnimationCompleted[i];
+        }
+      }
+
+      for (let i = 0; i < count; i++) {
+        const shape = this._particleShapeIndices[i];
+        const mesh = this._particleMeshes[shape];
+        const idx = instanceIndices[shape];
+        let matrix = new THREE.Matrix4();
+        let color = new THREE.Color();
+        if (detachedSet.has(i)) {
+          // Animate detached particles to their target position (spherical shell)
+          let s = this._particleSpinState[i];
+          let detachTarget = this._sphericalDetachTargets[this.currentLevel][i] || [0, 0, 0];
+          // If spinning, animate in orbit; else, animate to target
+          if (s) {
+            if (!s.spinStartTime) s.spinStartTime = now;
+            let spinElapsed = now - s.spinStartTime;
+            let ease = 1.0;
+            if (spinElapsed < SPIN_EASE_DURATION) {
+              ease = easeInCubic(Math.min(spinElapsed / SPIN_EASE_DURATION, 1));
+            }
+            s.theta += s.dTheta * ease;
+            const x = s.orbitRadius * Math.cos(s.theta);
+            const z = s.orbitRadius * Math.sin(s.theta);
+            const y = s.y;
+            matrix.makeTranslation(x, y, z);
+            // Fade color to red
+            color.copy(white).lerp(targetRed, ease);
+          } else {
+            // Animate from mesh position to detach target
+            if (!this._detachAnimations[i]) {
+              this._detachAnimations[i] = {
+                from: [this._meshPositions[i*3], this._meshPositions[i*3+1], this._meshPositions[i*3+2]],
+                to: detachTarget,
+                start: now,
+                duration: 1200
+              };
+            }
+            let anim = this._detachAnimations[i];
+            const t = Math.min((now - anim.start) / anim.duration, 1);
+            const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+            const easedT = easeOutCubic(t);
+            const from = anim.from;
+            const to = anim.to;
+            const x = from[0] + (to[0] - from[0]) * easedT;
+            const y = from[1] + (to[1] - from[1]) * easedT;
+            const z = from[2] + (to[2] - from[2]) * easedT;
+            matrix.makeTranslation(x, y, z);
+            // No color transition during detachment animation; always white
+            color.copy(white);
+            if (t >= 1) {
+              this._detachAnimationCompleted[i] = true;
+              delete this._detachAnimations[i];
+            }
+          }
         } else if (this._reattachAnimations[i]) {
-          // Animate reattaching from current spinning position to mesh with cubic ease-out
+          // If reattaching, clear detach animation state
+          if (this._detachAnimations[i]) delete this._detachAnimations[i];
+          if (this._detachAnimationCompleted[i]) delete this._detachAnimationCompleted[i];
+          // If reattaching, clear detach animation state
+          if (this._detachAnimations && this._detachAnimations[i]) delete this._detachAnimations[i];
+          if (this._detachAnimationCompleted && this._detachAnimationCompleted[i]) delete this._detachAnimationCompleted[i];
           anyReattaching = true;
           const anim = this._reattachAnimations[i];
           const t = Math.min((now - anim.start) / anim.duration, 1);
-          // Cubic ease-out for reattachment
           const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
           const easedT = easeOutCubic(t);
           const from = anim.from;
@@ -518,33 +763,31 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
           const x = from[0] + (to[0] - from[0]) * easedT;
           const y = from[1] + (to[1] - from[1]) * easedT;
           const z = from[2] + (to[2] - from[2]) * easedT;
-          positions.setXYZ(i, x, y, z);
-          // --- Fade color back to white as particle reattaches ---
-          const colors = this.points.geometry.attributes.color;
-          // Fade from custom red (213/255,0,11/255) to white (1,1,1) as t goes 0->1
-          const startR = 255 / 255;
-          const startG = 0.0;
-          const startB = 56 / 255;
-          const r = startR + (1.0 - startR) * easedT;
-          const g = startG + (1.0 - startG) * easedT;
-          const b = startB + (1.0 - startB) * easedT;
-          colors.setX(i, r);
-          colors.setY(i, g);
-          colors.setZ(i, b);
+          matrix.makeTranslation(x, y, z);
+          // Fade color back to white
+          color.copy(targetRed).lerp(white, easedT);
           if (t >= 1) {
-            // Animation done, clean up
             delete this._reattachAnimations[i];
             if (this._particleSpinState[i]) delete this._particleSpinState[i];
             if (this._particleSpinTargetLevel[i]) delete this._particleSpinTargetLevel[i];
           }
+        } else {
+          // Not spinning or reattaching: use mesh position and white color
+          const x = this._meshPositions[i*3];
+          const y = this._meshPositions[i*3+1];
+          const z = this._meshPositions[i*3+2];
+          matrix.makeTranslation(x, y, z);
+          color.copy(white);
         }
+        mesh.setMatrixAt(idx, matrix);
+        mesh.setColorAt(idx, color);
+        instanceIndices[shape]++;
       }
-      positions.needsUpdate = true;
-      // Update color buffer for fade to red/white
-      if (this.points && this.points.geometry && this.points.geometry.attributes.color) {
-        this.points.geometry.attributes.color.needsUpdate = true;
+      // Mark all instance matrices/colors as needing update
+      for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
+        this._particleMeshes[shape].instanceMatrix.needsUpdate = true;
+        if (this._particleMeshes[shape].instanceColor) this._particleMeshes[shape].instanceColor.needsUpdate = true;
       }
-      // If any reattaching, keep animation loop going
       this._reattachAnimationActive = anyReattaching;
     } else {
       // If not spinning, clear spin state
@@ -637,10 +880,9 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
     this._swipeLocked = true;
     this._introDone = true;
     // --- Camera animation for intro to level 1 ---
-    // Use same logic as gotoTimelineStep for camera animation
     const min = this._baseCameraPos || { x: 2, y: 2, z: 2 };
-    const max = { x: min.x + 2, y: min.y + 2, z: min.z + 2 };
-    const prevPercent = 0; // intro is always 0
+    const max = { x: min.x + 1.75, y: min.y + 1.75, z: min.z + 1.75 };
+    const prevPercent = 0;
     const percent = (this.timeline.length > 0 ? (this.timeline[0].items_consumed / this.totalItems) : 0);
     const startPos = {
       x: min.x + (max.x - min.x) * prevPercent,
@@ -652,32 +894,15 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
       y: min.y + (max.y - min.y) * percent,
       z: min.z + (max.z - min.z) * percent
     };
-    this._cameraAnim = {
-      from: { ...startPos },
-      to: { ...endPos },
-      start: performance.now(),
-      duration: 900,
-      active: true
-    };
-    console.log('[handleFadeOutIntro] Set _cameraAnim:', JSON.stringify(this._cameraAnim));
+    this._setCameraAnim(startPos, endPos, 900);
+    // console.log('[handleFadeOutIntro] Set _cameraAnim:', JSON.stringify(this._cameraAnim));
     if (introOverlay && introOverlay.style.display !== 'none') {
-      introOverlay.style.transition = 'opacity 0.7s';
-      introOverlay.style.opacity = '0';
-      setTimeout(() => {
-        introOverlay.style.display = 'none';
-      }, 700);
-      // Wait for fade out
-      await new Promise(res => setTimeout(res, 700));
+      await this._fadeOverlay(introOverlay, { opacity: '0', display: 'none', duration: 700 });
     }
     // Animate level 0: particles detach from human and move out
     // Ensure detachment indices are initialized (normally done in gotoTimelineStep)
-    if (!this._detachmentIndices && this.points) {
-      const count = this.points.geometry.attributes.position.count;
-      this._detachmentIndices = Array.from({length: count}, (_, i) => i);
-      for (let i = this._detachmentIndices.length - 1; i > 0; i--) {
-        const j = Math.floor(i * 1337 % (i + 1));
-        [this._detachmentIndices[i], this._detachmentIndices[j]] = [this._detachmentIndices[j], this._detachmentIndices[i]];
-      }
+    if (!this._detachmentIndices) {
+      this._initDetachmentIndices();
     }
     await this.animateDetachAndZoomDeterministic(0, this.timeline.length > 0 ? (this.timeline[0].items_consumed / this.totalItems) : 0);
     this.currentLevel = 0;
@@ -776,190 +1001,117 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
 
   async gotoTimelineStep(level) {
     if (this.isAnimating || this._swipeLocked) return;
-    console.log('[gotoTimelineStep] called with level:', level, 'currentLevel:', this.currentLevel);
+    // console.log('[gotoTimelineStep] called with level:', level, 'currentLevel:', this.currentLevel);
     // Allow level -1 for intro overlay state
     if (level < -1) level = -1;
-    // --- OUTRO OVERLAY HANDLING (NEW) ---
+    // --- OUTRO OVERLAY HANDLING (SHOW OUTRO WHEN PAST LAST LEVEL) ---
     if (level > this.timeline.length - 1) {
-      // Fade out timeline overlay
+      // Hide timeline overlay
       const timelineOverlay = document.getElementById('timeline-overlay');
-      if (timelineOverlay) {
-        timelineOverlay.style.transition = 'opacity 0.7s';
-        timelineOverlay.style.opacity = '0';
-        setTimeout(() => { timelineOverlay.style.display = 'none'; }, 700);
+      this._hideOverlay(timelineOverlay, { display: 'none', duration: 700 });
+      // Show outro overlay
+      const outroOverlay = document.getElementById('outro-overlay');
+      this._showOverlay(outroOverlay, { display: 'flex', duration: 800 });
+      // --- Add listeners for backwards navigation from outro ---
+      if (this._outroNavHandlers) {
+        window.removeEventListener('wheel', this._outroNavHandlers.wheel);
+        window.removeEventListener('keydown', this._outroNavHandlers.keydown);
+        window.removeEventListener('touchstart', this._outroNavHandlers.touchstart);
+        window.removeEventListener('touchmove', this._outroNavHandlers.touchmove);
       }
-      // Fade in outro overlay and block interaction
-      const outro = document.getElementById('outro-overlay');
-      if (outro) {
-        outro.style.display = 'block';
-        void outro.offsetWidth;
-        outro.style.transition = 'opacity 0.7s';
-        outro.style.opacity = '1';
-        // Block pointer events on canvas
-        const canvas = document.getElementById('three-canvas');
-        if (canvas) canvas.style.pointerEvents = 'none';
-      }
-      // Animate camera zoom out (top-right vector)
-      const min = this._baseCameraPos || { x: 2, y: 2, z: 2 };
-      const max = { x: min.x + 2, y: min.y + 2, z: min.z + 2 };
-      this._cameraAnim = {
-        from: { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z },
-        to: max,
-        start: performance.now(),
-        duration: 1200,
-        active: true
+      const self = this;
+      this._outroNavHandlers = {
+        wheel: function(e) {
+          if (e.deltaY < 0) {
+            self._hideOutroAndReturnToLastLevel();
+            e.preventDefault();
+          }
+        },
+        keydown: function(e) {
+          if (e.key === 'ArrowUp' || e.key === 'PageUp') {
+            self._hideOutroAndReturnToLastLevel();
+            e.preventDefault();
+          }
+        },
+        touchstart: function(e) {
+          if (e.touches && e.touches.length === 1) {
+            self._outroTouchStartY = e.touches[0].clientY;
+          }
+        },
+        touchmove: function(e) {
+          if (self._outroTouchStartY !== null && e.touches && e.touches.length === 1) {
+            const deltaY = e.touches[0].clientY - self._outroTouchStartY;
+            if (deltaY > 60) {
+              self._hideOutroAndReturnToLastLevel();
+              self._outroTouchStartY = null;
+              e.preventDefault();
+            }
+          }
+        }
       };
-      await new Promise(resolve => {
-        const check = () => {
-          const t = Math.min((performance.now() - this._cameraAnim.start) / this._cameraAnim.duration, 1);
-          if (t < 1) {
-            requestAnimationFrame(check);
-          } else {
-            resolve();
-          }
-        };
-        check();
-      });
-      // Attach navigation listeners to allow going back (using existing navigation structure)
-      if (!this._outroBackHandler) {
-        this._outroBackHandler = async (e) => {
-          if (this.isAnimating || this._swipeLocked) return;
-          let backward = false;
-          if (e.type === 'wheel' && e.deltaY < 0) backward = true;
-          if (e.type === 'keydown' && (e.key === 'ArrowUp' || e.key === 'PageUp')) backward = true;
-          if (e.type === 'touchmove' && this._outroTouchStartY !== null && e.touches.length === 1) {
-            const deltaY = e.touches[0].clientY - this._outroTouchStartY;
-            if (deltaY > 60) backward = true;
-          }
-          if (backward) {
-            // Fade out outro overlay
-            const outro = document.getElementById('outro-overlay');
-            if (outro) {
-              outro.style.transition = 'opacity 0.7s';
-              outro.style.opacity = '0';
-              setTimeout(() => { outro.style.display = 'none'; }, 700);
-            }
-            // Restore timeline overlay
-            const timelineOverlay = document.getElementById('timeline-overlay');
-            if (timelineOverlay) {
-              timelineOverlay.style.display = '';
-              void timelineOverlay.offsetWidth;
-              timelineOverlay.style.transition = 'opacity 0.7s';
-              timelineOverlay.style.opacity = '1';
-            }
-            // Restore camera zoom (top-right vector)
-            const min = this._baseCameraPos || { x: 2, y: 2, z: 2 };
-            const max = { x: min.x + 2, y: min.y + 2, z: min.z + 2 };
-            this._cameraAnim = {
-              from: { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z },
-              to: { x: min.x + (max.x - min.x) * 1, y: min.y + (max.y - min.y) * 1, z: min.z + (max.z - min.z) * 1 },
-              start: performance.now(),
-              duration: 1200,
-              active: true
-            };
-            await new Promise(resolve => {
-              const check = () => {
-                const t = Math.min((performance.now() - this._cameraAnim.start) / this._cameraAnim.duration, 1);
-                if (t < 1) {
-                  requestAnimationFrame(check);
-                } else {
-                  resolve();
-                }
-              };
-              check();
-            });
-            // Unblock pointer events on canvas
-            const canvas = document.getElementById('three-canvas');
-            if (canvas) canvas.style.pointerEvents = '';
-            // Remove listeners
-            window.removeEventListener('wheel', this._outroBackHandler, true);
-            window.removeEventListener('keydown', this._outroBackHandler, true);
-            window.removeEventListener('touchstart', this._outroTouchStartHandler, true);
-            window.removeEventListener('touchmove', this._outroBackHandler, true);
-            window.removeEventListener('touchend', this._outroTouchEndHandler, true);
-            this._outroBackHandler = null;
-            this._outroTouchStartHandler = null;
-            this._outroTouchEndHandler = null;
-            this._outroTouchStartY = null;
-            // Go back to last timeline step
-            this.gotoTimelineStep(this.timeline.length - 1);
-          }
-        };
-        this._outroTouchStartHandler = (e) => {
-          if (e.touches.length === 1) this._outroTouchStartY = e.touches[0].clientY;
-        };
-        this._outroTouchEndHandler = (e) => {
-          this._outroTouchStartY = null;
-        };
-        window.addEventListener('wheel', this._outroBackHandler, true);
-        window.addEventListener('keydown', this._outroBackHandler, true);
-        window.addEventListener('touchstart', this._outroTouchStartHandler, true);
-        window.addEventListener('touchmove', this._outroBackHandler, true);
-        window.addEventListener('touchend', this._outroTouchEndHandler, true);
-      }
+      window.addEventListener('wheel', this._outroNavHandlers.wheel, { passive: false });
+      window.addEventListener('keydown', this._outroNavHandlers.keydown);
+      window.addEventListener('touchstart', this._outroNavHandlers.touchstart, { passive: true });
+      window.addEventListener('touchmove', this._outroNavHandlers.touchmove, { passive: false });
+      this._outroTouchStartY = null;
+      // Optionally, fade out intro overlay if visible
+      const introOverlay = document.getElementById('intro-overlay');
+      this._hideOverlay(introOverlay, { display: 'none', duration: 700 });
+      this.isAnimating = false;
+      this._swipeLocked = true;
       return;
     }
+
     this.isAnimating = true;
     this._swipeLocked = true;
     // --- Fade out timeline overlay and reset typewriter animation if visible ---
     const timelineOverlay = document.getElementById('timeline-overlay');
     if (timelineOverlay && timelineOverlay.style.opacity !== '0' && timelineOverlay.style.display !== 'none') {
-      timelineOverlay.style.transition = 'opacity 0.7s';
-      timelineOverlay.style.opacity = '0';
-      // Reset typewriter animation if present
-      if (typeof window.resetTypewriterAnimation === 'function') {
-        window.resetTypewriterAnimation();
-      }
-      // Wait for fade out before continuing
-      await new Promise(res => setTimeout(res, 700));
+      this._resetTypewriterAnimation();
+      await this._fadeOverlay(timelineOverlay, { opacity: '0', display: undefined, duration: 700 });
     }
     // --- Deterministic detachment indices for each step ---
     if (!this._detachmentIndices) {
-      // Always use the same shuffled indices for all steps
-      const count = this.points.geometry.attributes.position.count;
-      this._detachmentIndices = Array.from({length: count}, (_, i) => i);
-      for (let i = this._detachmentIndices.length - 1; i > 0; i--) {
-        const j = Math.floor(i * 1337 % (i + 1)); // deterministic shuffle
-        [this._detachmentIndices[i], this._detachmentIndices[j]] = [this._detachmentIndices[j], this._detachmentIndices[i]];
-      }
+      this._initDetachmentIndices();
     }
     // Handle return to intro overlay state
     if (level === -1) {
-      // Animate all points back to mesh (particles form the human shape) and camera zoom in at the same time
+      // Animate all particles back to mesh (particles form the human shape) and camera zoom in at the same time
       // 1. Capture current displayed positions as start (before clearing spin/reattach state)
-      const positions = this.points.geometry.attributes.position;
-      const colors = this.points.geometry.attributes.color;
+      const count = this._instancedParticleCount;
       const start = [];
       const startColors = [];
-      for (let i = 0; i < positions.count; i++) {
-        start.push(positions.getX(i), positions.getY(i), positions.getZ(i));
-        // Store current RGB color
-        startColors.push(colors.getX(i), colors.getY(i), colors.getZ(i));
+      for (let i = 0; i < count; i++) {
+        // Find which mesh and instance index this particle is
+        const shape = this._particleShapeIndices[i];
+        const mesh = this._particleMeshes[shape];
+        const meshIdx = this._particleInstanceMap[shape].indexOf(i);
+        const matrix = new THREE.Matrix4();
+        mesh.getMatrixAt(meshIdx, matrix);
+        const pos = new THREE.Vector3();
+        pos.setFromMatrixPosition(matrix);
+        start.push(pos.x, pos.y, pos.z);
+        // Color
+        let color = new THREE.Color(1, 1, 1);
+        if (mesh.instanceColor) {
+          mesh.getColorAt(meshIdx, color);
+        }
+        startColors.push(color.r, color.g, color.b);
       }
-      // 2. Set morphing flag to disable per-particle logic in animation loop
       this._isMorphingToIntro = true;
-      // 3. Now stop spinning logic before morph
       this._particleSpinState = null;
       this._particleSpinTargetLevel = null;
       this._reattachAnimations = null;
       this._reattachAnimationActive = false;
       const end = this._meshPositions.slice();
-      // Camera animation: zoom out from level 1 position to intro position
-      // Use same logic as timeline step camera animation for consistency
+      // Camera animation: use actual current camera position as start, base position as end
       const min = this._baseCameraPos || { x: 2, y: 2, z: 2 };
-      const max = { x: min.x + 2, y: min.y + 2, z: min.z + 2 };
-      // If coming from level 1, use percent for level 1 as camera start
-      let prevPercent = 0;
-      if (this.currentLevel >= 0 && this.timeline[this.currentLevel]) {
-        prevPercent = (this.timeline[this.currentLevel].items_consumed / this.totalItems);
-      }
       const cameraStart = {
-        x: min.x + (max.x - min.x) * prevPercent,
-        y: min.y + (max.y - min.y) * prevPercent,
-        z: min.z + (max.z - min.z) * prevPercent
+        x: this.camera.position.x,
+        y: this.camera.position.y,
+        z: this.camera.position.z
       };
       const cameraEnd = min;
-      // Set up camera animation for main loop
       this._cameraAnim = {
         from: { ...cameraStart },
         to: { ...cameraEnd },
@@ -974,25 +1126,31 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
         const animate = () => {
           const elapsed = performance.now() - startTime;
           const t = Math.min(elapsed / duration, 1);
-          for (let i = 0; i < positions.count; i++) {
+          for (let i = 0; i < count; i++) {
             const idx = i * 3;
-            positions.setXYZ(
-              i,
-              start[idx] + (end[idx] - start[idx]) * t,
-              start[idx + 1] + (end[idx + 1] - start[idx + 1]) * t,
-              start[idx + 2] + (end[idx + 2] - start[idx + 2]) * t
-            );
-            // Fade color to white (1,1,1)
+            const shape = this._particleShapeIndices[i];
+            const mesh = this._particleMeshes[shape];
+            const meshIdx = this._particleInstanceMap[shape].indexOf(i);
+            // Interpolate position
+            const x = start[idx] + (end[idx] - start[idx]) * t;
+            const y = start[idx+1] + (end[idx+1] - start[idx+1]) * t;
+            const z = start[idx+2] + (end[idx+2] - start[idx+2]) * t;
+            const matrix = new THREE.Matrix4().makeTranslation(x, y, z);
+            mesh.setMatrixAt(meshIdx, matrix);
+            // Fade color to white
             const cidx = i * 3;
             const r0 = startColors[cidx + 0] !== undefined ? startColors[cidx + 0] : 1.0;
             const g0 = startColors[cidx + 1] !== undefined ? startColors[cidx + 1] : 1.0;
             const b0 = startColors[cidx + 2] !== undefined ? startColors[cidx + 2] : 1.0;
-            colors.setX(i, r0 + (1.0 - r0) * t);
-            colors.setY(i, g0 + (1.0 - g0) * t);
-            colors.setZ(i, b0 + (1.0 - b0) * t);
+            const r = r0 + (1.0 - r0) * t;
+            const g = g0 + (1.0 - g0) * t;
+            const b = b0 + (1.0 - b0) * t;
+            if (mesh.instanceColor) mesh.setColorAt(meshIdx, new THREE.Color(r, g, b));
           }
-          positions.needsUpdate = true;
-          colors.needsUpdate = true;
+          for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
+            this._particleMeshes[shape].instanceMatrix.needsUpdate = true;
+            if (this._particleMeshes[shape].instanceColor) this._particleMeshes[shape].instanceColor.needsUpdate = true;
+          }
           if (t < 1) {
             requestAnimationFrame(animate);
           } else {
@@ -1001,27 +1159,22 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
         };
         animate();
       });
-      // 4. Clear morphing flag after morph is done
       this._isMorphingToIntro = false;
-      // Fade out timeline overlay
       if (timelineOverlay) {
         timelineOverlay.style.transition = 'opacity 0.7s';
         timelineOverlay.style.opacity = '0';
       }
-      // Fade in intro overlay
       const intro = document.getElementById('intro-overlay');
       if (intro) {
         intro.style.display = '';
         void intro.offsetWidth;
         intro.style.transition = 'opacity 0.7s';
         intro.style.opacity = '1';
-        // Re-attach scroll/wheel listeners for intro overlay using the shared handler
         this._introDone = false;
         window.addEventListener('scroll', this._handleFadeOutIntro);
         window.addEventListener('wheel', this._handleFadeOutIntro);
       }
       this.currentLevel = -1;
-      // Lock navigation until user scrolls forward again
       this._introFaded = false;
       this.isAnimating = false;
       this._swipeLocked = false;
@@ -1031,27 +1184,22 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
     const data = this.timeline[level];
     const percent = data && this.totalItems ? (data.items_consumed / this.totalItems) : 0;
     let prevPercent = (this.currentLevel >= 0 && this.timeline[this.currentLevel]) ? (this.timeline[this.currentLevel].items_consumed / this.totalItems) : 0;
-    console.log('[gotoTimelineStep] prevPercent:', prevPercent, 'percent:', percent);
-
+    // console.log('[gotoTimelineStep] prevPercent:', prevPercent, 'percent:', percent);
     // --- Overlay fade out and type animation reset ---
     if (timelineOverlay && timelineOverlay.style.opacity !== '0') {
       timelineOverlay.style.transition = 'opacity 0.3s';
       timelineOverlay.style.opacity = '0';
-      // Reset typewriter animation if present
       const statSublabel = timelineOverlay.querySelector('.overlay-stat-sublabel');
       if (statSublabel) {
         statSublabel.innerHTML = '';
         statSublabel.style.opacity = 0;
         statSublabel.style.display = 'none';
       }
-      // Wait for fade out before animating
       await new Promise(res => setTimeout(res, 320));
     }
-
     // Camera zoom logic: always animate from prevPercent to percent (forward or backward)
-    // Set camera animation target for main loop
     const min = this._baseCameraPos || { x: 2, y: 2, z: 2 };
-    const max = { x: min.x + 2, y: min.y + 2, z: min.z + 2 };
+    const max = { x: min.x + 1.75, y: min.y + 1.75, z: min.z + 1.75 };
     const startPos = {
       x: min.x + (max.x - min.x) * prevPercent,
       y: min.y + (max.y - min.y) * prevPercent,
@@ -1062,35 +1210,24 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
       y: min.y + (max.y - min.y) * percent,
       z: min.z + (max.z - min.z) * percent
     };
-    this._cameraAnim = {
-      from: { ...startPos },
-      to: { ...endPos },
-      start: performance.now(),
-      duration: 900,
-      active: true
-    };
-    console.log('[gotoTimelineStep] Set _cameraAnim:', JSON.stringify(this._cameraAnim));
+    this._setCameraAnim(startPos, endPos, 900);
+    // console.log('[gotoTimelineStep] Set _cameraAnim:', JSON.stringify(this._cameraAnim));
     await this.animateDetachAndZoomDeterministic(prevPercent, percent);
     this.currentLevel = level;
     this.updateTimelineOverlay(level);
-    // Fade in overlay in correct order: date → percentage → sublabel, after overlay is fully visible
     if (timelineOverlay) {
-      timelineOverlay.style.transition = 'opacity 0.7s';
-      timelineOverlay.style.opacity = '1';
+      this._showOverlay(timelineOverlay, { display: '', duration: 700 });
       const yearEl = timelineOverlay.querySelector('.overlay-year');
       const statMainEl = timelineOverlay.querySelector('.overlay-stat-main');
       const statSublabelEl = timelineOverlay.querySelector('.overlay-stat-sublabel');
-      // Hide all children first
       if (yearEl) { yearEl.style.opacity = 0; yearEl.style.display = ''; }
       if (statMainEl) { statMainEl.style.opacity = 0; statMainEl.style.display = ''; }
       if (statSublabelEl) {
-        // Always clear and hide before fade-in
-        if (typeof window.resetTypewriterAnimation === 'function') window.resetTypewriterAnimation();
+        this._resetTypewriterAnimation();
         statSublabelEl.innerHTML = '';
         statSublabelEl.style.opacity = 0;
         statSublabelEl.style.display = 'none';
       }
-      // Start child fade-in after overlay fade-in completes (0.7s)
       setTimeout(() => {
         if (yearEl) {
           yearEl.style.transition = 'opacity 0.3s';
@@ -1106,7 +1243,6 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
               statSublabelEl.style.transition = 'opacity 0.3s';
               statSublabelEl.style.display = '';
               statSublabelEl.style.opacity = 1;
-              // Always trigger typewriter after fade-in
               if (typeof window.startTypewriterAnimation === 'function') {
                 window.startTypewriterAnimation();
               }
@@ -1121,19 +1257,16 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
 
   // Animate detachment/reattachment and camera zoom for timeline step (deterministic indices)
   async animateDetachAndZoomDeterministic(prevPercent, nextPercent) {
-    if (!this.points) return;
-    const positions = this.points.geometry.attributes.position;
-    const count = positions.count;
+    // InstancedMesh version
+    if (!this._particleMeshes) return;
+    const count = this._instancedParticleCount;
     const detachCountPrev = Math.floor(count * prevPercent);
     const detachCountNext = Math.floor(count * nextPercent);
     const detachIndicesPrev = new Set(this._detachmentIndices.slice(0, detachCountPrev));
     const detachIndicesNext = new Set(this._detachmentIndices.slice(0, detachCountNext));
-    const startPositions = [];
-    const endPositions = [];
     // Determine the current timeline step (level) for detachment scale
     let currentStep = 0;
     if (this.timeline && this.timeline.length > 0 && typeof nextPercent === 'number') {
-      // Find the closest timeline step for nextPercent
       let minDiff = 1;
       for (let i = 0; i < this.timeline.length; i++) {
         const stepPercent = this.timeline[i].items_consumed / this.totalItems;
@@ -1143,88 +1276,49 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
         }
       }
     }
-    // Detachment scale: level 0 = 1, level 1 = 2, level 2 = 3, level 3+ = 4
-    let detachmentScale = Math.min(currentStep + 1, 3);
-    // Precompute random spherical targets for all possible detachment levels for determinism
+    let detachmentScale = Math.min(currentStep + 1, Scene.DETACHMENT_SCALE_MAX);
     if (!this._sphericalDetachTargets) this._sphericalDetachTargets = {};
     if (!this._sphericalDetachTargets[currentStep]) {
-      this._sphericalDetachTargets[currentStep] = [];
-      for (let i = 0; i < count; i++) {
-        const randomFactor = 1 + (Math.random() - 0.5) * 0.2;
-        const r = detachmentScale * randomFactor;
-        const u = Math.random();
-        const v = Math.random();
-        const theta = 2 * Math.PI * u;
-        const phi = Math.acos(2 * v - 1);
-        const sx = r * Math.sin(phi) * Math.cos(theta);
-        const sy = r * Math.sin(phi) * Math.sin(theta);
-        const sz = r * Math.cos(phi);
-        this._sphericalDetachTargets[currentStep][i] = [sx, sy, sz];
-      }
+      this._sphericalDetachTargets[currentStep] = this._generateSphericalDetachTargets(currentStep, count, detachmentScale);
     }
+    // Only snap attached->attached particles; never animate detachment/reattachment here
     for (let i = 0; i < count; i++) {
-      let x = positions.getX(i), y = positions.getY(i), z = positions.getZ(i);
-      let meshX = this._meshPositions[i*3], meshY = this._meshPositions[i*3+1], meshZ = this._meshPositions[i*3+2];
-      // Only animate if detachment state changes
       const wasDetached = detachIndicesPrev.has(i);
       const willBeDetached = detachIndicesNext.has(i);
-      if (wasDetached !== willBeDetached) {
-        // Animate from current to target
-        startPositions.push(x, y, z);
-        if (willBeDetached) {
-          // Animate to spherical detachment
-          const [sx, sy, sz] = this._sphericalDetachTargets[currentStep][i];
-          endPositions.push(sx, sy, sz);
-        } else {
-          // Animate to mesh
-          endPositions.push(meshX, meshY, meshZ);
-        }
-      } else {
-        // Keep static: set both start and end to current position
-        startPositions.push(x, y, z);
-        endPositions.push(x, y, z);
+      // Only snap attached->attached (not spinning)
+      if (!wasDetached && !willBeDetached) {
+        const shape = this._particleShapeIndices[i];
+        const mesh = this._particleMeshes[shape];
+        const meshIdx = this._particleInstanceMap[shape].indexOf(i);
+        const meshX = this._meshPositions[i*3], meshY = this._meshPositions[i*3+1], meshZ = this._meshPositions[i*3+2];
+        const instantMatrix = new THREE.Matrix4().makeTranslation(meshX, meshY, meshZ);
+        mesh.setMatrixAt(meshIdx, instantMatrix);
       }
+      // For newly detached particles, always reset detach animation state so they animate from mesh to shell
+      if (!wasDetached && willBeDetached) {
+        if (!this._detachAnimations) this._detachAnimations = {};
+        if (!this._detachAnimationCompleted) this._detachAnimationCompleted = {};
+        // Always reset animation state for new detachment
+        this._detachAnimations[i] = {
+          from: [this._meshPositions[i*3], this._meshPositions[i*3+1], this._meshPositions[i*3+2]],
+          to: this._sphericalDetachTargets[currentStep][i],
+          start: performance.now(),
+          duration: 1200
+        };
+        // Also clear any completed flag so main loop animates it
+        if (this._detachAnimationCompleted[i]) delete this._detachAnimationCompleted[i];
+        // Also clear spin state so it doesn't start spinning until animation completes
+        if (this._particleSpinState && this._particleSpinState[i]) delete this._particleSpinState[i];
+        if (this._particleSpinTargetLevel && this._particleSpinTargetLevel[i]) delete this._particleSpinTargetLevel[i];
+      }
+      // All animation for detachment/reattachment is handled in the main loop
     }
-    // Animate detachment/reattachment only (camera handled by main loop)
-    const duration = 1200;
-    function easeInOutCubic(t) {
-      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    // Mark all instance matrices as needing update
+    for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
+      this._particleMeshes[shape].instanceMatrix.needsUpdate = true;
     }
-    function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
-    await new Promise(resolve => {
-      const animate = () => {
-        const elapsed = performance.now() - startTime;
-        const t = Math.min(elapsed / duration, 1);
-        const easedT = easeInOutCubic(t);
-        for (let i = 0; i < count; i++) {
-          const idx = i * 3;
-          const wasDetached = detachIndicesPrev.has(i);
-          const willBeDetached = detachIndicesNext.has(i);
-          let localT;
-          if (wasDetached && !willBeDetached) {
-            localT = easeOutCubic(t);
-          } else if (!wasDetached && willBeDetached) {
-            localT = easedT;
-          } else {
-            localT = 1;
-          }
-          positions.setXYZ(
-            i,
-            startPositions[idx] + (endPositions[idx] - startPositions[idx]) * localT,
-            startPositions[idx+1] + (endPositions[idx+1] - startPositions[idx+1]) * localT,
-            startPositions[idx+2] + (endPositions[idx+2] - startPositions[idx+2]) * localT
-          );
-        }
-        positions.needsUpdate = true;
-        if (t < 1) {
-          requestAnimationFrame(animate);
-        } else {
-          resolve();
-        }
-      };
-      const startTime = performance.now();
-      animate();
-    });
+    // Camera transition is handled as before; no per-particle animation here
+    // (No blocking animation for detachment/reattachment)
   }
 
   updateTimelineOverlay(level) {
@@ -1245,5 +1339,29 @@ this.renderer.setClearColor(0x8B959A, 1); // for black, or use any color you wan
       totalSteps: this.timeline.length,
       references: data.references || ''
     });
+  }
+
+  // Fade out outro overlay and return to last timeline level
+  _hideOutroAndReturnToLastLevel() {
+    const outroOverlay = document.getElementById('outro-overlay');
+    const timelineOverlay = document.getElementById('timeline-overlay');
+    if (outroOverlay && outroOverlay.style.display !== 'none') {
+      this._hideOverlay(outroOverlay, { display: 'none', duration: 700 });
+      setTimeout(() => {
+        this._showOverlay(timelineOverlay, { display: '', duration: 700 });
+        // Return to last timeline level
+        this.currentLevel = this.timeline.length - 1;
+        this.updateTimelineOverlay(this.currentLevel);
+        this.isAnimating = false;
+        this._swipeLocked = false;
+        // Remove outro nav listeners
+        if (this._outroNavHandlers) {
+          window.removeEventListener('wheel', this._outroNavHandlers.wheel);
+          window.removeEventListener('keydown', this._outroNavHandlers.keydown);
+          window.removeEventListener('touchstart', this._outroNavHandlers.touchstart);
+          window.removeEventListener('touchmove', this._outroNavHandlers.touchmove);
+        }
+      }, 700);
+    }
   }
 }

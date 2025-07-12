@@ -1,27 +1,32 @@
 [
   {
-    "age": 20,
-    "items_consumed": 300,
+    "age": "Sneakers",
+    "items_consumed": 60,
+     "mesh": "sneaks.glb",
     "description": "festival shirts, impulse hoodies, fast-fashion jeans. Worn a few times, then swapped, forgotten, or binned mid-trend."
   },
-  {
-    "age": 30,
-    "items_consumed": 700,
-    "description": "workwear, gym gear, night-out outfits — often replaced before worn out. Wardrobe churn normalized; few items repaired."
-  },
-  {
-    "age": 40,
-    "items_consumed": 1100,
-    "description": "duplicates, misfits, and sale grabs — piling up faster than they’re worn. Styles change, habits don’t. Closets fill, landfills follow."
-  },
-  {
-    "age": 50,
-    "items_consumed": 1350,
+    {
+    "age": "Jeans",
+    "mesh": "pants.glb",
+    "items_consumed": 200,
     "description": "trend pieces, seasonal layers, and untouched occasionwear. Discarded not because they broke — but because they no longer fit a mood or moment."
   },
   {
-    "age": 65,
-    "items_consumed": 1500,
+    "age": "Pullovers",
+    "mesh": "sweat.glb",
+    "items_consumed": 280,
+    "description": "workwear, gym gear, night-out outfits — often replaced before worn out. Wardrobe churn normalized; few items repaired."
+  },
+  {
+    "age": "Shirts",
+    "mesh": "shirt.glb",
+    "items_consumed": 340,
+    "description": "duplicates, misfits, and sale grabs — piling up faster than they’re worn. Styles change, habits don’t. Closets fill, landfills follow."
+  },
+  {
+    "age": "T-shirts",
+    "mesh": "tee.glb",
+    "items_consumed": 850,
     "description": "old uniforms, gift sweaters, fast-fading synthetics. Some never worn. Most still intact. A lifetime of garments, none truly gone."
   }
 ]
