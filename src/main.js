@@ -258,6 +258,18 @@ window.resetTypewriterAnimation = function() {
   window._typewriterToken++;
 };
 
+// --- Overlay animation cancellation logic ---
+window._timelineAnimToken = 0;
+window._timelineAnimTimeouts = [];
+window._timelineAnimFrames = [];
+window.cancelTimelineOverlayAnimations = function() {
+  window._timelineAnimToken++;
+  window._timelineAnimTimeouts.forEach(clearTimeout);
+  window._timelineAnimTimeouts = [];
+  window._timelineAnimFrames.forEach(cancelAnimationFrame);
+  window._timelineAnimFrames = [];
+};
+
 // Overlay update logic
 window.updateTimelineOverlay = function({ year, event, species, contaminationRate, description, show, step, totalSteps, references }) {
   const header = document.querySelector('.overlay-header');
@@ -276,6 +288,9 @@ window.updateTimelineOverlay = function({ year, event, species, contaminationRat
   if (typeof contaminationRate === 'number' && contaminationRate > 10) itemsConsumed = contaminationRate;
   // Header/footer always visible (no longer set by JS)
   // Show/hide stat+year block
+  // Cancel previous overlay animations
+  window.cancelTimelineOverlayAnimations();
+  const myToken = window._timelineAnimToken;
   if (!show) {
     yearEl.style.opacity = 0;
     stat.style.opacity = 0;
@@ -285,7 +300,7 @@ window.updateTimelineOverlay = function({ year, event, species, contaminationRat
     return;
   }
   // Set content
-  yearEl.textContent = year;
+  yearEl.textContent = '';
   // Animate statMain as a plain number (count up)
   let targetValue = itemsConsumed;
   statMain.textContent = '0';
@@ -308,80 +323,118 @@ window.updateTimelineOverlay = function({ year, event, species, contaminationRat
   } else {
     statSublabel.textContent = desc;
   }
-  // Animate stat+year block in order: year, items consumed, description
+  // Animate stat+year block in order: stat, year, typewriter
+  // Remove transitions before resetting opacity to avoid unwanted fade
+  yearEl.style.transition = 'none';
+  statMain.style.transition = 'none';
+  statSublabel.style.transition = 'none';
   yearEl.style.opacity = 0;
   statMain.style.opacity = 0;
   statSublabel.style.opacity = 0;
   statSublabel.style.display = 'none';
   stat.style.opacity = 1; // container always visible for layout
   statMain.textContent = '0'; // Reset stat to 0 before anim
-  // Cancel any ongoing typewriter animation
   window.resetTypewriterAnimation();
-  setTimeout(() => {
-    yearEl.style.transition = 'opacity 0.5s';
-    yearEl.style.opacity = 1;
-    setTimeout(() => window.playClickSound(), 80); // 80ms delay before sound
-    setTimeout(() => {
-      statMain.style.transition = 'opacity 0.5s';
-      statMain.style.opacity = 1;
-      // Play click sound at start of stat-main animation
-      if (window.playClickSound) window.playClickSound();
-      // Start items consumed count up animation (no percent)
-      let animStart = null;
-      let animDuration = 1200;
-      function animateCount(ts) {
-        if (!animStart) animStart = ts;
-        let elapsed = ts - animStart;
-        let progress = Math.min(1, elapsed / animDuration);
-        let val = Math.round(targetValue * progress);
-        statMain.textContent = val.toLocaleString();
-        if (progress < 1) {
-          requestAnimationFrame(animateCount);
-        } else {
-          statMain.textContent = targetValue.toLocaleString();
-          // Typewriter effect for sublabel after number animation
-          statSublabel.style.transition = '';
-          statSublabel.style.display = 'block';
-          statSublabel.style.opacity = 1;
-          let sublabelHTML = '';
-          let pinkSpan = null;
-          let desc = description || '';
-          let match = desc.match(/^(of [^,\s]+|of [^\s]+)/i);
-          let sublabelText = '';
-          if (match) {
-            statSublabel.innerHTML = `<span class='pink'>${match[0]}</span>`;
-            pinkSpan = statSublabel.querySelector('.pink');
-            sublabelText = desc.slice(match[0].length);
-            sublabelHTML = pinkSpan ? pinkSpan.outerHTML : '';
-          } else {
-            statSublabel.innerHTML = '';
-            sublabelText = desc;
-            sublabelHTML = '';
-          }
-          let i = 0;
-          const myToken = ++window._typewriterToken;
-          function typeWriter() {
-            if (window._typewriterToken !== myToken) return; // Abort if interrupted
-            // Play click sound only at start of sublabel animation, with a short delay
-            if (i === 0 && window.playClickSound) {
-              setTimeout(() => { if (window._typewriterToken === myToken) window.playClickSoundTwo(); }, 80); // 80ms delay before sound
+  function addTimeout(fn, delay) {
+    const id = setTimeout(fn, delay);
+    window._timelineAnimTimeouts.push(id);
+    return id;
+  }
+  function addFrame(fn) {
+    const id = requestAnimationFrame(fn);
+    window._timelineAnimFrames.push(id);
+    return id;
+  }
+
+  // 1. Stat number (count up)
+  addTimeout(() => {
+    if (window._timelineAnimToken !== myToken) return;
+    statMain.style.transition = 'opacity 0.5s';
+    statMain.style.opacity = 1;
+    if (window.playClickSound) window.playClickSound();
+    let animStart = null;
+    let animDuration = 1200;
+    function animateCount(ts) {
+      if (window._timelineAnimToken !== myToken) return;
+      if (!animStart) animStart = ts;
+      let elapsed = ts - animStart;
+      let progress = Math.min(1, elapsed / animDuration);
+      let val = Math.round(targetValue * progress);
+      statMain.textContent = val.toLocaleString();
+      if (progress < 1) {
+        addFrame(animateCount);
+      } else {
+        statMain.textContent = targetValue.toLocaleString();
+        // 2. Year (typewriter animation)
+        yearEl.style.transition = 'none';
+        yearEl.style.opacity = 1;
+        yearEl.textContent = '';
+        // Hide year until typewriter starts
+        yearEl.style.visibility = 'hidden';
+        let yearStr = String(year);
+        let yearIdx = 0;
+        const yearTypeToken = ++window._typewriterToken;
+        function typeYear() {
+          if (window._typewriterToken !== yearTypeToken || window._timelineAnimToken !== myToken) return;
+          yearEl.textContent = yearStr.slice(0, yearIdx);
+          if (yearIdx === 0) {
+            yearEl.style.visibility = 'visible';
+            if (window.playClickSound) {
+              addTimeout(() => { if (window._typewriterToken === yearTypeToken && window._timelineAnimToken === myToken) window.playClickSoundTwo(); }, 80);
             }
-            statSublabel.innerHTML = sublabelHTML + sublabelText.slice(0, i);
-            if (i <= sublabelText.length) {
-              i++;
-              setTimeout(typeWriter, 9);
+          }
+          if (yearIdx < yearStr.length) {
+            yearIdx++;
+            addTimeout(typeYear, 80);
+          } else {
+            // After year typewriter, play click sound and start description typewriter
+            addTimeout(() => {
+              if (window._timelineAnimToken !== myToken) return;
+              window.playClickSound();
+            }, 80);
+            // 3. Typewriter description
+            statSublabel.style.transition = '';
+            statSublabel.style.display = 'block';
+            statSublabel.style.opacity = 1;
+            let sublabelHTML = '';
+            let pinkSpan = null;
+            let desc = description || '';
+            let match = desc.match(/^(of [^,\s]+|of [^\s]+)/i);
+            let sublabelText = '';
+            if (match) {
+              statSublabel.innerHTML = `<span class='pink'>${match[0]}</span>`;
+              pinkSpan = statSublabel.querySelector('.pink');
+              sublabelText = desc.slice(match[0].length);
+              sublabelHTML = pinkSpan ? pinkSpan.outerHTML : '';
             } else {
-              if (window._typewriterToken !== myToken) return;
-              // Append [SRC] link if references exists
-              if (references) {
-                statSublabel.innerHTML += ` <a alt="Click for related study" href="${references}" target="_blank" rel="noopener noreferrer">[+]</a>`;
+              statSublabel.innerHTML = '';
+              sublabelText = desc;
+              sublabelHTML = '';
+            }
+            let i = 0;
+            const typeToken = ++window._typewriterToken;
+            function typeWriter() {
+              if (window._typewriterToken !== typeToken || window._timelineAnimToken !== myToken) return;
+              if (i === 0 && window.playClickSound) {
+                addTimeout(() => { if (window._typewriterToken === typeToken && window._timelineAnimToken === myToken) window.playClickSoundTwo(); }, 80);
+              }
+              statSublabel.innerHTML = sublabelHTML + sublabelText.slice(0, i);
+              if (i <= sublabelText.length) {
+                i++;
+                addTimeout(typeWriter, 9);
+              } else {
+                if (window._typewriterToken !== typeToken || window._timelineAnimToken !== myToken) return;
+                if (references) {
+                  statSublabel.innerHTML += ` <a alt=\"Click for related study\" href=\"${references}\" target=\"_blank\" rel=\"noopener noreferrer\">[+]</a>`;
+                }
               }
             }
+            typeWriter();
           }
-          typeWriter();
         }
+        typeYear();
       }
-      requestAnimationFrame(animateCount);
-    }, 400);
+    }
+    addFrame(animateCount);
   }, 200);
 };

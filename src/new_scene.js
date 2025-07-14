@@ -13,7 +13,7 @@ export class Scene {
   static SPIN_EASE_DURATION = 900;
   static SHARED_ORBIT_DTHETA = 0.004;
   static DETACHMENT_SCALE_MAX = 3;
-  static CUBE_COLOR = 0x3C414A;
+  static CUBE_COLOR = 0x60666F;
   static OVERLAY_FADE_DURATION = 700;
   static OUTRO_FADE_DURATION = 800;
   static SWIPE_THRESHOLD = 60;
@@ -264,7 +264,7 @@ export class Scene {
       }
     }
     const baseMaterial = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
+      color: 0xC2C4C8,
       roughness: 0.5,
       metalness: 0.1
     });
@@ -282,30 +282,34 @@ export class Scene {
     let totalParticles = 0;
     let meshPositions = [];
     if (this.timeline && this.timeline.length === Scene.PARTICLE_SHAPE_COUNT) {
-      for (let t = 0; t < this.timeline.length; t++) {
-        const garment = this.timeline[t].garment;
-        const count = this.timeline[t].items_consumed;
-        const meshIdx = garmentToMeshIdx[garment];
-        for (let i = 0; i < count; i++) {
-          const origIdx = ((totalParticles + i) * 3) % this._meshPositions.length;
-          const pos = [this._meshPositions[origIdx], this._meshPositions[origIdx + 1], this._meshPositions[origIdx + 2]];
-          meshPositions.push(...pos);
-          shapeParticleIndices[meshIdx].push(totalParticles + i);
-          // Create particle object
-          this.particles.push({
-            garmentType: garment,
-            meshIdx,
-            initialPosition: pos,
-            detachmentTarget: null,
-            detachmentStep: null,
-            isDetached: false,
-            spinState: null,
-            animationState: null // 'detaching', 'spinning', 'reattaching', null
-          });
-        }
-        shapeCounts[meshIdx] += count;
-        totalParticles += count;
+    for (let t = 0; t < this.timeline.length; t++) {
+      const garment = this.timeline[t].garment;
+      const count = this.timeline[t].items_consumed;
+      const meshIdx = garmentToMeshIdx[garment];
+      for (let i = 0; i < count; i++) {
+        const origIdx = ((totalParticles + i) * 3) % this._meshPositions.length;
+        const pos = [this._meshPositions[origIdx], this._meshPositions[origIdx + 1], this._meshPositions[origIdx + 2]];
+        meshPositions.push(...pos);
+        shapeParticleIndices[meshIdx].push(totalParticles + i);
+        // Generate and store initial random rotation
+        const rotX = Math.random() * 2 * Math.PI;
+        const rotY = Math.random() * 2 * Math.PI;
+        const rotZ = Math.random() * 2 * Math.PI;
+        this.particles.push({
+          garmentType: garment,
+          meshIdx,
+          initialPosition: pos,
+          initialRotation: { x: rotX, y: rotY, z: rotZ },
+          detachmentTarget: null,
+          detachmentStep: null,
+          isDetached: false,
+          spinState: null,
+          animationState: null // 'detaching', 'spinning', 'reattaching', null
+        });
       }
+      shapeCounts[meshIdx] += count;
+      totalParticles += count;
+    }
     }
     this._meshPositions = meshPositions;
     this._particleShapeIndices = [];
@@ -332,7 +336,7 @@ export class Scene {
       this._particleInstanceMap[shape][instanceIndices[shape]] = i;
       instanceIndices[shape]++;
     }
-    // Set initial transforms and colors
+    // Set initial transforms and colors, with random rotation
     for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
       let mesh = this._particleMeshes[shape];
       let idx = 0;
@@ -341,7 +345,11 @@ export class Scene {
         const x = this._meshPositions[i * 3];
         const y = this._meshPositions[i * 3 + 1];
         const z = this._meshPositions[i * 3 + 2];
-        const matrix = new THREE.Matrix4().makeTranslation(x, y, z);
+        // Use stored initial rotation
+        const rot = this.particles[i].initialRotation;
+        const matrix = new THREE.Matrix4();
+        matrix.makeRotationFromEuler(new THREE.Euler(rot.x, rot.y, rot.z));
+        matrix.setPosition(x, y, z);
         mesh.setMatrixAt(idx, matrix);
         mesh.setColorAt(idx, new THREE.Color(1, 1, 1));
         idx++;
@@ -427,7 +435,7 @@ export class Scene {
       this.renderer = new THREE.WebGLRenderer({ antialias: true, canvas: document.getElementById('three-canvas') });
       this.renderer.setSize(window.innerWidth, window.innerHeight);
     }
-this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you want
+this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you want
     // Scene and camera setup
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -435,12 +443,6 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
     this.camera.position.set(1.25, 1.25, 1.25);
     this._baseCameraPos = { x: 1.25, y: 1.25, z: 1.25 }; // Save for later reference
     this.camera.lookAt(0, 0, 0);
-
-    // Debug helpers (uncomment for debugging)
-    // const gridHelper = new THREE.GridHelper(10, 10);
-    // this.scene.add(gridHelper);
-    // const axesHelper = new THREE.AxesHelper(5);
-    // this.scene.add(axesHelper);
 
     // Handle window resize
     window.addEventListener('resize', () => this.onResize());
@@ -595,10 +597,10 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
       this.camera.position.y = this._cameraAnim.from.y + (this._cameraAnim.to.y - this._cameraAnim.from.y) * t;
       this.camera.position.z = this._cameraAnim.from.z + (this._cameraAnim.to.z - this._cameraAnim.from.z) * t;
       this.camera.lookAt(0, 0, 0);
-      // console.log('[animate] Camera animating. t:', t.toFixed(3), 'from:', this._cameraAnim.from, 'to:', this._cameraAnim.to, 'current:', {x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z});
+
       if (t >= 1) {
         this._cameraAnim.active = false;
-        // console.log('[animate] Camera animation complete. Final position:', {x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z});
+      
       }
     }
     // If not animating, just set to target
@@ -633,8 +635,34 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
       const shapeCounts = Array(Scene.PARTICLE_SHAPE_COUNT).fill(0);
       for (let i = 0; i < this.particles.length; i++) shapeCounts[this.particles[i].meshIdx]++;
       const instanceIndices = Array(Scene.PARTICLE_SHAPE_COUNT).fill(0);
-      const targetRed = new THREE.Color(Scene.CUBE_COLOR);
-      const white = new THREE.Color(1, 1, 1);
+      // --- HSB/HSL color transitions for detachment/reattachment ---
+      // Helper: interpolate HSL, but keep saturation and lightness high as you approach yellow
+      function interpolateHSL(colorA, colorB, t) {
+        const hslA = {};
+        colorA.getHSL(hslA);
+        const hslB = {};
+        colorB.getHSL(hslB);
+        // Interpolate hue as before
+        let dh = hslB.h - hslA.h;
+        if (Math.abs(dh) > 0.5) {
+          if (dh > 0) dh -= 1;
+          else dh += 1;
+        }
+        const h = (hslA.h + dh * t + 1) % 1;
+        // Instead of linear interpolation, bias saturation and lightness toward target as t increases
+        // Use easeOut for vividness
+        const easeOut = t => 1 - Math.pow(1 - t, 2);
+        const s = hslA.s + (hslB.s - hslA.s) * easeOut(t);
+        const l = hslA.l + (hslB.l - hslA.l) * easeOut(t);
+        // Optionally, clamp saturation/lightness to minimums for vivid yellow
+        const vividYellowMinS = 0.85;
+        const vividYellowMinL = 0.5;
+        const sFinal = t > 0.7 ? Math.max(s, vividYellowMinS) : s;
+        const lFinal = t > 0.7 ? Math.max(l, vividYellowMinL) : l;
+        const out = new THREE.Color();
+        out.setHSL(h, sFinal, lFinal);
+        return out;
+      }
 
       // Detach and animate particles, and handle reattachment
       for (let i = 0; i < this.particles.length; i++) {
@@ -682,28 +710,46 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
         const mesh = this._particleMeshes[p.meshIdx];
         const idx = instanceIndices[p.meshIdx];
         let matrix = new THREE.Matrix4();
-        let color = new THREE.Color();
+        // Always use static color (white)
         if (p.animationState === 'reattaching') {
           if (!p.reattachAnimStart) p.reattachAnimStart = now;
           const t = Math.min((now - p.reattachAnimStart) / Scene.PARTICLE_REATTACH_DURATION, 1);
-          const easeInCubic = t => t * t * t;
-          const easedT = easeInCubic(t);
+          const easeInOutCubic = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+          const easedT = easeInOutCubic(t);
           const from = p.reattachFrom || p.initialPosition;
           const to = p.initialPosition;
           const x = from[0] + (to[0] - from[0]) * easedT;
           const y = from[1] + (to[1] - from[1]) * easedT;
           const z = from[2] + (to[2] - from[2]) * easedT;
-          matrix.makeTranslation(x, y, z);
-          color.copy(white).lerp(targetRed, 1 - easedT);
+          const rot = p.initialRotation || { x: 0, y: 0, z: 0 };
+          matrix.makeRotationFromEuler(new THREE.Euler(rot.x, rot.y, rot.z));
+          matrix.setPosition(x, y, z);
+          mesh.setMatrixAt(idx, matrix);
+          // Animate color for detached particles (HSB/HSL interpolation)
+          if (p.isDetached) {
+            let isActiveLevel = (p.detachmentStep === this.currentLevel);
+            let targetColor = isActiveLevel ? new THREE.Color(0xFFFF00) : new THREE.Color(1, 1, 1);
+            if (p.animationState === 'detaching') {
+              const t = Math.min((now - p.detachAnimStart) / Scene.PARTICLE_DETACH_DURATION, 1);
+              const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+              const easedT = easeOutCubic(t);
+              let colorAnim = interpolateHSL(new THREE.Color(1, 1, 1), targetColor, easedT);
+              mesh.setColorAt(idx, colorAnim);
+            } else {
+              mesh.setColorAt(idx, targetColor);
+            }
+          } else {
+            mesh.setColorAt(idx, new THREE.Color(1, 1, 1));
+          }
+          instanceIndices[p.meshIdx]++;
           if (t >= 1) {
-            // Reset to attached state
             p.isDetached = false;
             p.animationState = null;
             p.spinState = null;
             p.detachmentTarget = null;
             p.reattachAnimStart = null;
             p.reattachFrom = null;
-            p.detachAnimStart = null; // <-- Ensure detachment animation is reset after reattachment
+            p.detachAnimStart = null;
           }
         } else if (p.isDetached) {
           if (p.animationState === 'detaching') {
@@ -716,20 +762,38 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
             const x = from[0] + (to[0] - from[0]) * easedT;
             const y = from[1] + (to[1] - from[1]) * easedT;
             const z = from[2] + (to[2] - from[2]) * easedT;
-            matrix.makeTranslation(x, y, z);
-            color.copy(white);
+            const rot = p.initialRotation || { x: 0, y: 0, z: 0 };
+            matrix.makeRotationFromEuler(new THREE.Euler(rot.x, rot.y, rot.z));
+            matrix.setPosition(x, y, z);
+            mesh.setMatrixAt(idx, matrix);
+            // Animate color for detached particles (HSB/HSL interpolation)
+            if (p.isDetached) {
+              let isActiveLevel = (p.detachmentStep === this.currentLevel);
+              let targetColor = isActiveLevel ? new THREE.Color(0xFFD000) : new THREE.Color(1, 1, 1);
+              if (p.animationState === 'detaching') {
+                const t = Math.min((now - p.detachAnimStart) / Scene.PARTICLE_DETACH_DURATION, 1);
+                const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+                const easedT = easeOutCubic(t);
+                let colorAnim = interpolateHSL(new THREE.Color(1, 1, 1), targetColor, easedT);
+                mesh.setColorAt(idx, colorAnim);
+              } else {
+                mesh.setColorAt(idx, targetColor);
+              }
+            } else {
+              mesh.setColorAt(idx, new THREE.Color(1, 1, 1));
+            }
+            instanceIndices[p.meshIdx]++;
             if (t >= 1) {
               p.animationState = 'spinning';
-              // Store spherical coordinates for true spherical spinning
               const [tx, ty, tz] = [x, y, z];
               const r = Math.sqrt(tx * tx + ty * ty + tz * tz);
-              let theta = Math.atan2(tz, tx); // azimuthal
-              let phi = Math.acos(ty / r);    // polar
+              let theta = Math.atan2(tz, tx);
+              let phi = Math.acos(ty / r);
               p.spinState = {
                 theta,
                 phi,
                 dTheta: Scene.SHARED_ORBIT_DTHETA,
-                dPhi: Scene.SHARED_ORBIT_DTHETA * 0.5, // slower polar rotation
+                dPhi: Scene.SHARED_ORBIT_DTHETA * 0.5,
                 r,
                 base: [tx, ty, tz],
                 spinStartTime: now
@@ -743,28 +807,61 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
             if (spinElapsed < SPIN_EASE_DURATION) {
               ease = easeInCubic(Math.min(spinElapsed / SPIN_EASE_DURATION, 1));
             }
-            // True spherical spin: only update theta, keep phi and r constant
             s.theta += s.dTheta * ease;
             const r = s.r;
             const phi = s.phi;
             const theta = s.theta;
-            // Spherical coordinates to Cartesian
             const x = r * Math.sin(phi) * Math.cos(theta);
             const y = r * Math.cos(phi);
             const z = r * Math.sin(phi) * Math.sin(theta);
-            matrix.makeTranslation(x, y, z);
-            color.copy(white).lerp(targetRed, ease);
+            const rot = p.initialRotation || { x: 0, y: 0, z: 0 };
+            matrix.makeRotationFromEuler(new THREE.Euler(rot.x, rot.y, rot.z));
+            matrix.setPosition(x, y, z);
+            mesh.setMatrixAt(idx, matrix);
+            // Animate color for detached particles (HSB/HSL interpolation)
+            if (p.isDetached) {
+              let isActiveLevel = (p.detachmentStep === this.currentLevel);
+              let targetColor = isActiveLevel ? new THREE.Color(0xFFD000) : new THREE.Color(1, 1, 1);
+              if (p.animationState === 'detaching') {
+                const t = Math.min((now - p.detachAnimStart) / Scene.PARTICLE_DETACH_DURATION, 1);
+                const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+                const easedT = easeOutCubic(t);
+                let colorAnim = interpolateHSL(new THREE.Color(1, 1, 1), targetColor, easedT);
+                mesh.setColorAt(idx, colorAnim);
+              } else {
+                mesh.setColorAt(idx, targetColor);
+              }
+            } else {
+              mesh.setColorAt(idx, new THREE.Color(1, 1, 1));
+            }
+            instanceIndices[p.meshIdx]++;
           }
         } else {
           const x = p.initialPosition[0];
           const y = p.initialPosition[1];
           const z = p.initialPosition[2];
-          matrix.makeTranslation(x, y, z);
-          color.copy(white);
+          const rot = p.initialRotation || { x: 0, y: 0, z: 0 };
+          matrix.makeRotationFromEuler(new THREE.Euler(rot.x, rot.y, rot.z));
+          matrix.setPosition(x, y, z);
+          mesh.setMatrixAt(idx, matrix);
+            // Animate color for detached particles
+            if (p.isDetached) {
+              let isActiveLevel = (p.detachmentStep === this.currentLevel);
+              let targetColor = isActiveLevel ? new THREE.Color(0xFFD000) : new THREE.Color(1, 1, 1);
+              if (p.animationState === 'detaching') {
+                const t = Math.min((now - p.detachAnimStart) / Scene.PARTICLE_DETACH_DURATION, 1);
+                const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+                const easedT = easeOutCubic(t);
+                let colorAnim = new THREE.Color(1, 1, 1).lerp(targetColor, easedT);
+                mesh.setColorAt(idx, colorAnim);
+              } else {
+                mesh.setColorAt(idx, targetColor);
+              }
+            } else {
+              mesh.setColorAt(idx, new THREE.Color(1, 1, 1));
+            }
+          instanceIndices[p.meshIdx]++;
         }
-        mesh.setMatrixAt(idx, matrix);
-        mesh.setColorAt(idx, color);
-        instanceIndices[p.meshIdx]++;
       }
       for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
         this._particleMeshes[shape].instanceMatrix.needsUpdate = true;
@@ -850,7 +947,7 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
   async handleFadeOutIntro(e) {
     const introOverlay = document.getElementById('intro-overlay');
     // Only allow scroll down (wheel/touch/scroll) to trigger, ignore scroll up
-    if (this.isAnimating || this._swipeLocked || this._introDone) return;
+    if (this.isAnimating || this._introDone) return;
     // If event is wheel, only allow deltaY > 0 (scroll down)
     if (e && e.type === 'wheel' && e.deltaY <= 0) return;
     // If event is scroll, only allow if user has scrolled down from the top
@@ -861,11 +958,10 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
     window.removeEventListener('scroll', this._handleFadeOutIntro);
     window.removeEventListener('wheel', this._handleFadeOutIntro);
     this.isAnimating = true;
-    this._swipeLocked = true;
     this._introDone = true;
     // --- Camera animation for intro to level 1 ---
     const min = this._baseCameraPos || { x: 2, y: 2, z: 2 };
-    const max = { x: min.x + 1.75, y: min.y + 1.75, z: min.z + 1.75 };
+    const max = { x: min.x + 2.5, y: min.y + 2.5, z: min.z + 2.5 };
     const prevPercent = 0;
     const percent = (this.timeline.length > 0 ? (this.timeline[0].items_consumed / this.totalItems) : 0);
     const startPos = {
@@ -899,7 +995,6 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
     }
     // Now unlock navigation for further timeline steps
     this.isAnimating = false;
-    this._swipeLocked = false;
     this._introFaded = true;
   }
   // Morph mesh points to cloud for intro (blocking, returns promise)
@@ -918,22 +1013,21 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
   }
 
   setupNavigation() {
-    // Robust navigation: lock during animation, threshold for wheel/swipe, prevent before intro faded
-    this._swipeLocked = false;
+    // Navigation: threshold for wheel/swipe, prevent before intro faded
     this._swipeThreshold = 60;
     this._swipeAccum = 0;
     this._introFaded = false;
     let touchStartY = null;
     // Helper: go to timeline step by offset
     this._gotoTimelineStepOffset = (dir) => {
-      if (this._swipeLocked || this.isAnimating) return;
+      if (this.isAnimating) return;
       if (!this._introFaded && dir < 0) return;
       if (!this._introFaded && dir > 0) return; // Only allow intro sequence
       this.gotoTimelineStep(this.currentLevel + dir);
     };
     // Wheel event (trackpad/touchpad/mouse)
     window.addEventListener('wheel', (e) => {
-      if (this._swipeLocked || this.isAnimating) return;
+      if (this.isAnimating) return;
       if (Math.abs(e.deltaY) < Math.abs(e.deltaX)) return;
       this._swipeAccum += e.deltaY;
       if (this._swipeAccum > this._swipeThreshold) {
@@ -947,7 +1041,7 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
     }, { passive: false });
     // Keyboard navigation
     window.addEventListener('keydown', (e) => {
-      if (this._swipeLocked || this.isAnimating) return;
+      if (this.isAnimating) return;
       if (e.key === 'ArrowDown' || e.key === 'PageDown') {
         this._gotoTimelineStepOffset(1);
         e.preventDefault();
@@ -958,11 +1052,11 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
     });
     // Touch navigation (swipe up/down)
     window.addEventListener('touchstart', (e) => {
-      if (this._swipeLocked || this.isAnimating) return;
+      if (this.isAnimating) return;
       if (e.touches.length === 1) touchStartY = e.touches[0].clientY;
     }, { passive: true });
     window.addEventListener('touchmove', (e) => {
-      if (this._swipeLocked || this.isAnimating) return;
+      if (this.isAnimating) return;
       if (touchStartY !== null && e.touches.length === 1) {
         const deltaY = e.touches[0].clientY - touchStartY;
         if (Math.abs(deltaY) > this._swipeThreshold) {
@@ -984,70 +1078,70 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
   }
 
   async gotoTimelineStep(level) {
-    if (this.isAnimating || this._swipeLocked) return;
-    // console.log('[gotoTimelineStep] called with level:', level, 'currentLevel:', this.currentLevel);
-    // Allow level -1 for intro overlay state
-    if (level < -1) level = -1;
-    // --- OUTRO OVERLAY HANDLING (SHOW OUTRO WHEN PAST LAST LEVEL) ---
+    if (this.isAnimating) return;
+    // Show outro overlay and hide timeline overlay if navigating past last timeline level
     if (level > this.timeline.length - 1) {
-      // Hide timeline overlay
       const timelineOverlay = document.getElementById('timeline-overlay');
-      this._hideOverlay(timelineOverlay, { display: 'none', duration: 700 });
-      // Show outro overlay
-      const outroOverlay = document.getElementById('outro-overlay');
-      this._showOverlay(outroOverlay, { display: 'flex', duration: 800 });
-      // --- Add listeners for backwards navigation from outro ---
-      if (this._outroNavHandlers) {
-        window.removeEventListener('wheel', this._outroNavHandlers.wheel);
-        window.removeEventListener('keydown', this._outroNavHandlers.keydown);
-        window.removeEventListener('touchstart', this._outroNavHandlers.touchstart);
-        window.removeEventListener('touchmove', this._outroNavHandlers.touchmove);
+      if (timelineOverlay) {
+        timelineOverlay.style.transition = 'opacity 0.7s';
+        timelineOverlay.style.opacity = '0';
+        setTimeout(() => {
+          timelineOverlay.style.display = 'none';
+        }, 700);
       }
-      const self = this;
-      this._outroNavHandlers = {
-        wheel: function(e) {
-          if (e.deltaY < 0) {
-            self._hideOutroAndReturnToLastLevel();
-            e.preventDefault();
+      const outroOverlay = document.getElementById('outro-overlay');
+      if (outroOverlay) {
+        outroOverlay.style.display = 'flex';
+        void outroOverlay.offsetWidth;
+        outroOverlay.style.transition = 'opacity 0.8s';
+        outroOverlay.style.opacity = '1';
+        outroOverlay.style.pointerEvents = 'auto';
+        // Add navigation listeners for returning to last timeline overlay
+        const handleOutroBack = (e) => {
+          // Allow wheel up, arrow up, or swipe down
+          if ((e.type === 'wheel' && e.deltaY < 0) ||
+              (e.type === 'keydown' && (e.key === 'ArrowUp' || e.key === 'PageUp')) ||
+              (e.type === 'touchmove' && window._outroTouchStartY !== null && e.touches && e.touches.length === 1 && (e.touches[0].clientY - window._outroTouchStartY) > 60)) {
+            // Hide outro overlay
+            outroOverlay.style.transition = 'opacity 0.7s';
+            outroOverlay.style.opacity = '0';
+            setTimeout(() => {
+              outroOverlay.style.display = 'none';
+              outroOverlay.style.pointerEvents = 'none';
+              // Show last timeline overlay
+              if (timelineOverlay) {
+                timelineOverlay.style.display = '';
+                void timelineOverlay.offsetWidth;
+                timelineOverlay.style.transition = 'opacity 0.7s';
+                timelineOverlay.style.opacity = '1';
+              }
+            }, 700);
+            // Remove listeners
+            window.removeEventListener('wheel', handleOutroBack);
+            window.removeEventListener('keydown', handleOutroBack);
+            window.removeEventListener('touchstart', handleOutroTouchStart);
+            window.removeEventListener('touchmove', handleOutroBack);
+            window._outroTouchStartY = null;
           }
-        },
-        keydown: function(e) {
-          if (e.key === 'ArrowUp' || e.key === 'PageUp') {
-            self._hideOutroAndReturnToLastLevel();
-            e.preventDefault();
-          }
-        },
-        touchstart: function(e) {
+        };
+        const handleOutroTouchStart = (e) => {
           if (e.touches && e.touches.length === 1) {
-            self._outroTouchStartY = e.touches[0].clientY;
+            window._outroTouchStartY = e.touches[0].clientY;
           }
-        },
-        touchmove: function(e) {
-          if (self._outroTouchStartY !== null && e.touches && e.touches.length === 1) {
-            const deltaY = e.touches[0].clientY - self._outroTouchStartY;
-            if (deltaY > 60) {
-              self._hideOutroAndReturnToLastLevel();
-              self._outroTouchStartY = null;
-              e.preventDefault();
-            }
-          }
-        }
-      };
-      window.addEventListener('wheel', this._outroNavHandlers.wheel, { passive: false });
-      window.addEventListener('keydown', this._outroNavHandlers.keydown);
-      window.addEventListener('touchstart', this._outroNavHandlers.touchstart, { passive: true });
-      window.addEventListener('touchmove', this._outroNavHandlers.touchmove, { passive: false });
-      this._outroTouchStartY = null;
-      // Optionally, fade out intro overlay if visible
-      const introOverlay = document.getElementById('intro-overlay');
-      this._hideOverlay(introOverlay, { display: 'none', duration: 700 });
-      this.isAnimating = false;
-      this._swipeLocked = true;
+        };
+        window.addEventListener('wheel', handleOutroBack, { passive: false });
+        window.addEventListener('keydown', handleOutroBack);
+        window.addEventListener('touchstart', handleOutroTouchStart, { passive: true });
+        window.addEventListener('touchmove', handleOutroBack, { passive: false });
+        window._outroTouchStartY = null;
+      }
       return;
     }
+    // Allow level -1 for intro overlay state
+    if (level < -1) level = -1;
+    // Outro overlay handling removed
 
     this.isAnimating = true;
-    this._swipeLocked = true;
     // --- Fade out timeline overlay and reset typewriter animation if visible ---
     const timelineOverlay = document.getElementById('timeline-overlay');
     if (timelineOverlay && timelineOverlay.style.opacity !== '0' && timelineOverlay.style.display !== 'none') {
@@ -1119,7 +1213,11 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
             const x = start[idx] + (end[idx] - start[idx]) * t;
             const y = start[idx+1] + (end[idx+1] - start[idx+1]) * t;
             const z = start[idx+2] + (end[idx+2] - start[idx+2]) * t;
-            const matrix = new THREE.Matrix4().makeTranslation(x, y, z);
+            // Apply initial rotation
+            const rot = this.particles[i]?.initialRotation || { x: 0, y: 0, z: 0 };
+            const matrix = new THREE.Matrix4();
+            matrix.makeRotationFromEuler(new THREE.Euler(rot.x, rot.y, rot.z));
+            matrix.setPosition(x, y, z);
             mesh.setMatrixAt(meshIdx, matrix);
             // Fade color to white
             const cidx = i * 3;
@@ -1196,7 +1294,7 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
     }
     // Camera zoom logic: always animate from prevPercent to percent (forward or backward)
     const min = this._baseCameraPos || { x: 2, y: 2, z: 2 };
-    const max = { x: min.x + 1.75, y: min.y + 1.75, z: min.z + 1.75 };
+    const max = { x: min.x + 2.5, y: min.y + 2.5, z: min.z + 2.5 };
     const startPos = {
       x: min.x + (max.x - min.x) * prevPercent,
       y: min.y + (max.y - min.y) * prevPercent,
@@ -1249,7 +1347,6 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
       }, 700);
     }
     this.isAnimating = false;
-    this._swipeLocked = false;
   }
 
   // Animate detachment/reattachment and camera zoom for timeline step (deterministic indices)
@@ -1339,26 +1436,5 @@ this.renderer.setClearColor(0x181A1E, 1); // for black, or use any color you wan
   }
 
   // Fade out outro overlay and return to last timeline level
-  _hideOutroAndReturnToLastLevel() {
-    const outroOverlay = document.getElementById('outro-overlay');
-    const timelineOverlay = document.getElementById('timeline-overlay');
-    if (outroOverlay && outroOverlay.style.display !== 'none') {
-      this._hideOverlay(outroOverlay, { display: 'none', duration: 700 });
-      setTimeout(() => {
-        this._showOverlay(timelineOverlay, { display: '', duration: 700 });
-        // Return to last timeline level
-        this.currentLevel = this.timeline.length - 1;
-        this.updateTimelineOverlay(this.currentLevel);
-        this.isAnimating = false;
-        this._swipeLocked = false;
-        // Remove outro nav listeners
-        if (this._outroNavHandlers) {
-          window.removeEventListener('wheel', this._outroNavHandlers.wheel);
-          window.removeEventListener('keydown', this._outroNavHandlers.keydown);
-          window.removeEventListener('touchstart', this._outroNavHandlers.touchstart);
-          window.removeEventListener('touchmove', this._outroNavHandlers.touchmove);
-        }
-      }, 700);
-    }
-  }
+  // Outro overlay logic removed
 }
