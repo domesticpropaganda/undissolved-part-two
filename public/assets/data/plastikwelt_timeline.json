@@ -1,32 +1,38 @@
 [
   {
     "garment": "Sneakers",
+    "mesh": "sneaks.glb",
     "items_consumed": 120,
-     "mesh": "sneaks.glb",
-    "description": "festival shirts, impulse hoodies, fast-fashion jeans. Worn a few times, then swapped, forgotten, or binned mid-trend."
+    "description": "Festival pairs, gym rotations, lifestyle kicks. Designed for performance, discarded for fashion.<br><br><span class=\"highlight\">POTENTIAL WASTE:</span> Glued synthetics and rubber soles resist recycling. Decomposition may take centuries."
   },
-    {
+  {
     "garment": "Jeans",
     "mesh": "pants.glb",
     "items_consumed": 200,
-    "description": "trend pieces, seasonal layers, and untouched occasionwear. Discarded not because they broke — but because they no longer fit a mood or moment."
-  },
-  {
-    "garment": "Pullovers",
-    "mesh": "sweat.glb",
-    "items_consumed": 280,
-    "description": "workwear, gym gear, night-out outfits — often replaced before worn out. Wardrobe churn normalized; few items repaired."
+    "description": "Trend pieces, seasonal layers, and untouched occasionwear. Discarded not because they broke \u2014 but because they no longer fit a mood or moment.<br><br><span class=\"highlight\">POTENTIAL WASTE:</span> Heavy denim with elastane or chemical distressing makes recycling energy-intensive."
   },
   {
     "garment": "Shirts",
     "mesh": "shirt.glb",
+    "items_consumed": 280,
+    "description": "Duplicates, misfits, and sale grabs \u2014 piling up faster than they\u2019re worn. Styles change, habits don\u2019t. Closets fill, landfills follow.<br><br><span class=\"highlight\">POTENTIAL WASTE:</span> Cotton-synthetic blends resist decomposition and retain dyes and finishes for decades."
+  },
+  {
+    "garment": "Sweats & Hoodies",
+    "mesh": "sweat.glb",
     "items_consumed": 340,
-    "description": "duplicates, misfits, and sale grabs — piling up faster than they’re worn. Styles change, habits don’t. Closets fill, landfills follow."
+    "description": "Bought for comfort, replaced for novelty. Faded prints, cracked logos, seasonal collabs \u2014 worn until the next one drops.<br><br><span class=\"highlight\">POTENTIAL WASTE:</span> Polyester blends and graphic inks shed microfibers and clog recycling systems."
+  },
+  {
+    "garment": "Socks",
+    "mesh": "socks.glb",
+    "items_consumed": 400,
+    "description": "Bought in packs, lost in pairs. Few repaired, most replaced. Their size hides the scale.<br><br><span class=\"highlight\">POTENTIAL WASTE:</span> Frequent laundering releases dense microfibers. Elastic blends make recycling nearly impossible."
   },
   {
     "garment": "T-shirts",
     "mesh": "tee.glb",
     "items_consumed": 850,
-    "description": "old uniforms, gift sweaters, fast-fading synthetics. Some never worn. Most still intact. A lifetime of garments, none truly gone."
+    "description": "Bought in bulk, gifted at events, picked up on impulse. Worn a few times, if at all \u2014 some never leave the drawer.<br><br><span class=\"highlight\">POTENTIAL WASTE:</span> Mostly polyester blends, they release microplastics in every wash and degrade into long-lived landfill waste."
   }
 ]

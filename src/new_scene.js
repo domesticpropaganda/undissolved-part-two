@@ -114,27 +114,35 @@ export class Scene {
     this.timeline = [];
     this.totalItems = 0;
     this.meshObj = null;
-    // Preload particle meshes before app initialization
-    this._particleMeshFiles = [
-      'tee.glb',
-      'shirt.glb',
-      'pants.glb',
-      'sneaks.glb',
-      'sweat.glb'
-    ];
+    this._particleMeshFiles = [];
     this._particleMeshGeometries = [];
-    this.preloadParticleMeshes().then(() => {
-      this.loadAssets().then(() => {
-        // Show mesh as points for intro (human made of particles)
-        this.showMeshAsPoints();
-        this.showInitialCloud(); // Generate cloud positions for morphing
+    // Load timeline JSON first, then extract mesh files and preload meshes
+    fetch('assets/data/plastikwelt_timeline.json')
+      .then(response => response.json())
+      .then(json => {
+        this.timeline = json;
+        // Extract unique mesh files from timeline (use 'mesh' key)
+        const meshFilesSet = new Set();
+        for (const entry of this.timeline) {
+          if (entry.mesh) meshFilesSet.add(entry.mesh);
+        }
+        this._particleMeshFiles = Array.from(meshFilesSet);
         this.totalItems = this.timeline.length > 0 ? this.timeline[this.timeline.length - 1].items_consumed : 1;
-        this.setupNavigation();
-        this.updateTimelineOverlay(-1); // Hide overlay initially
-        if (this.preloader) this.preloader.remove();
-        console.log('Assets loaded and mesh displayed');
+        // Preload meshes
+        this.preloadParticleMeshes().then(() => {
+          this.loadAssets().then(() => {
+            this.showMeshAsPoints();
+            this.showInitialCloud();
+            this.setupNavigation();
+            this.updateTimelineOverlay(-1);
+            if (this.preloader) this.preloader.remove();
+            console.log('Assets loaded and mesh displayed');
+          });
+        });
+      })
+      .catch(err => {
+        console.error('Failed to load timeline JSON:', err);
       });
-    });
     this.animate();
   }
 
@@ -254,34 +262,31 @@ export class Scene {
     }
     if (!this._meshPositions) return;
     // --- InstancedMesh version: use preloaded GLB meshes for particles ---
-    let geometries;
-    if (this._particleMeshGeometries && this._particleMeshGeometries.length === Scene.PARTICLE_SHAPE_COUNT) {
-      geometries = this._particleMeshGeometries;
-    } else {
-      geometries = [];
-      for (let i = 0; i < Scene.PARTICLE_SHAPE_COUNT; i++) {
-        geometries.push(new THREE.BoxGeometry(Scene.PARTICLE_MIN_WIDTH, Scene.PARTICLE_MIN_WIDTH, Scene.PARTICLE_MIN_WIDTH));
-      }
-    }
+    // Use mesh files and garment mapping from timeline
+    let geometries = this._particleMeshGeometries;
     const baseMaterial = new THREE.MeshStandardMaterial({
-      color: 0xC2C4C8,
+      color: 0xFFFFFF, // Set default mesh color to #6B707B
       roughness: 0.5,
       metalness: 0.1
     });
-    // --- Robust per-particle state: create this.particles array ---
-    const garmentToMeshIdx = {
-      'T-shirts': 0,
-      'Shirts': 1,
-      'Jeans': 2,
-      'Sneakers': 3,
-      'Pullovers': 4
-    };
+    // Map garment to meshIdx using mesh_file
+    const garmentToMeshIdx = {};
+    const meshFileToIdx = {};
+    for (let i = 0; i < this._particleMeshFiles.length; i++) {
+      meshFileToIdx[this._particleMeshFiles[i]] = i;
+    }
+    for (let t = 0; t < this.timeline.length; t++) {
+      const garment = this.timeline[t].garment;
+      const meshFile = this.timeline[t].mesh;
+      if (meshFileToIdx.hasOwnProperty(meshFile)) {
+        garmentToMeshIdx[garment] = meshFileToIdx[meshFile];
+      }
+    }
     this.particles = [];
-    const shapeCounts = Array(Scene.PARTICLE_SHAPE_COUNT).fill(0);
-    const shapeParticleIndices = Array(Scene.PARTICLE_SHAPE_COUNT).fill().map(() => []);
+    const shapeCounts = Array(this._particleMeshFiles.length).fill(0);
+    const shapeParticleIndices = Array(this._particleMeshFiles.length).fill().map(() => []);
     let totalParticles = 0;
     let meshPositions = [];
-    if (this.timeline && this.timeline.length === Scene.PARTICLE_SHAPE_COUNT) {
     for (let t = 0; t < this.timeline.length; t++) {
       const garment = this.timeline[t].garment;
       const count = this.timeline[t].items_consumed;
@@ -310,17 +315,16 @@ export class Scene {
       shapeCounts[meshIdx] += count;
       totalParticles += count;
     }
-    }
     this._meshPositions = meshPositions;
     this._particleShapeIndices = [];
-    for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
+    for (let shape = 0; shape < this._particleMeshFiles.length; shape++) {
       for (let idx of shapeParticleIndices[shape]) {
         this._particleShapeIndices[idx] = shape;
       }
     }
     // Create InstancedMeshes
     this._particleMeshes = [];
-    for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
+    for (let shape = 0; shape < this._particleMeshFiles.length; shape++) {
       const mesh = new THREE.InstancedMesh(geometries[shape], baseMaterial.clone(), shapeCounts[shape]);
       mesh.castShadow = false;
       mesh.receiveShadow = false;
@@ -329,15 +333,15 @@ export class Scene {
       this._particleMeshes.push(mesh);
     }
     // Store mapping: for each shape, which instance index is which particle
-    this._particleInstanceMap = Array(Scene.PARTICLE_SHAPE_COUNT).fill().map(() => []);
-    const instanceIndices = Array(Scene.PARTICLE_SHAPE_COUNT).fill(0);
+    this._particleInstanceMap = Array(this._particleMeshFiles.length).fill().map(() => []);
+    const instanceIndices = Array(this._particleMeshFiles.length).fill(0);
     for (let i = 0; i < totalParticles; i++) {
       const shape = this._particleShapeIndices[i];
       this._particleInstanceMap[shape][instanceIndices[shape]] = i;
       instanceIndices[shape]++;
     }
     // Set initial transforms and colors, with random rotation
-    for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
+    for (let shape = 0; shape < this._particleMeshFiles.length; shape++) {
       let mesh = this._particleMeshes[shape];
       let idx = 0;
       for (let i = 0; i < totalParticles; i++) {
@@ -351,7 +355,7 @@ export class Scene {
         matrix.makeRotationFromEuler(new THREE.Euler(rot.x, rot.y, rot.z));
         matrix.setPosition(x, y, z);
         mesh.setMatrixAt(idx, matrix);
-        mesh.setColorAt(idx, new THREE.Color(1, 1, 1));
+        mesh.setColorAt(idx, new THREE.Color(0x6B707B)); // Set base color to #6B707B
         idx++;
       }
       mesh.instanceMatrix.needsUpdate = true;
@@ -617,50 +621,58 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
     } else if (this._particleMeshes && this.particles && this.timeline && this.currentLevel >= 0) {
       // --- Robust per-particle detachment and spinning logic ---
       // Shared variables declared once per animate() scope
-      const garmentToMeshIdx = {
-        'T-shirts': 0,
-        'Shirts': 1,
-        'Jeans': 2,
-        'Sneakers': 3,
-        'Pullovers': 4
-      };
+      // Use dynamic garmentToMeshIdx mapping from showMeshAsPoints
+      const garmentToMeshIdx = {};
+      const meshFileToIdx = {};
+      for (let i = 0; i < this._particleMeshFiles.length; i++) {
+        meshFileToIdx[this._particleMeshFiles[i]] = i;
+      }
+      for (let t = 0; t < this.timeline.length; t++) {
+        const garment = this.timeline[t].garment;
+        const meshFile = this.timeline[t].mesh;
+        if (meshFileToIdx.hasOwnProperty(meshFile)) {
+          garmentToMeshIdx[garment] = meshFileToIdx[meshFile];
+        }
+      }
       const detachedGarmentTypes = new Set();
       for (let step = 0; step <= this.currentLevel; step++) {
         if (!this.timeline[step]) continue;
         detachedGarmentTypes.add(this.timeline[step].garment);
       }
+      // If at last timeline step, detach all garment types
+      if (this.currentLevel === this.timeline.length - 1) {
+        for (let t = 0; t < this.timeline.length; t++) {
+          detachedGarmentTypes.add(this.timeline[t].garment);
+        }
+      }
       let now = performance.now();
       const SPIN_EASE_DURATION = Scene.SPIN_EASE_DURATION;
       function easeInCubic(t) { return t * t * t; }
-      const shapeCounts = Array(Scene.PARTICLE_SHAPE_COUNT).fill(0);
+      const meshShapeCount = this._particleMeshFiles.length;
+      const shapeCounts = Array(meshShapeCount).fill(0);
       for (let i = 0; i < this.particles.length; i++) shapeCounts[this.particles[i].meshIdx]++;
-      const instanceIndices = Array(Scene.PARTICLE_SHAPE_COUNT).fill(0);
+      const instanceIndices = Array(meshShapeCount).fill(0);
       // --- HSB/HSL color transitions for detachment/reattachment ---
       // Helper: interpolate HSL, but keep saturation and lightness high as you approach yellow
       function interpolateHSL(colorA, colorB, t) {
+        // Clamp hue to yellow, only interpolate saturation and lightness
         const hslA = {};
         colorA.getHSL(hslA);
         const hslB = {};
         colorB.getHSL(hslB);
-        // Interpolate hue as before
-        let dh = hslB.h - hslA.h;
-        if (Math.abs(dh) > 0.5) {
-          if (dh > 0) dh -= 1;
-          else dh += 1;
-        }
-        const h = (hslA.h + dh * t + 1) % 1;
-        // Instead of linear interpolation, bias saturation and lightness toward target as t increases
-        // Use easeOut for vividness
+        // Use yellow's hue for the whole transition
+        const yellowHue = hslB.h;
+        // Interpolate saturation and lightness only
         const easeOut = t => 1 - Math.pow(1 - t, 2);
         const s = hslA.s + (hslB.s - hslA.s) * easeOut(t);
         const l = hslA.l + (hslB.l - hslA.l) * easeOut(t);
-        // Optionally, clamp saturation/lightness to minimums for vivid yellow
+        // Clamp saturation/lightness to minimums for vivid yellow
         const vividYellowMinS = 0.85;
         const vividYellowMinL = 0.5;
         const sFinal = t > 0.7 ? Math.max(s, vividYellowMinS) : s;
         const lFinal = t > 0.7 ? Math.max(l, vividYellowMinL) : l;
         const out = new THREE.Color();
-        out.setHSL(h, sFinal, lFinal);
+        out.setHSL(yellowHue, sFinal, lFinal);
         return out;
       }
 
@@ -678,6 +690,7 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
               p.detachmentTarget = this._generateSphericalDetachTargets(this.currentLevel, 1, detachmentScale)[0];
             }
             p.animationState = 'detaching';
+            
             p.spinState = null;
             p.reattachAnimStart = null;
           }
@@ -710,7 +723,9 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
         const mesh = this._particleMeshes[p.meshIdx];
         const idx = instanceIndices[p.meshIdx];
         let matrix = new THREE.Matrix4();
-        // Always use static color (white)
+        // Always use static color (base)
+        const baseColor = new THREE.Color(0x6B707B); // #535760ff
+        const yellowColor = new THREE.Color(0xFFD000); // #FFD000
         if (p.animationState === 'reattaching') {
           if (!p.reattachAnimStart) p.reattachAnimStart = now;
           const t = Math.min((now - p.reattachAnimStart) / Scene.PARTICLE_REATTACH_DURATION, 1);
@@ -725,21 +740,21 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
           matrix.makeRotationFromEuler(new THREE.Euler(rot.x, rot.y, rot.z));
           matrix.setPosition(x, y, z);
           mesh.setMatrixAt(idx, matrix);
-          // Animate color for detached particles (HSB/HSL interpolation)
+          // Animate color for detached particles (HSL interpolation)
           if (p.isDetached) {
             let isActiveLevel = (p.detachmentStep === this.currentLevel);
-            let targetColor = isActiveLevel ? new THREE.Color(0xFFFF00) : new THREE.Color(1, 1, 1);
+            let targetColor = isActiveLevel ? yellowColor : baseColor;
             if (p.animationState === 'detaching') {
               const t = Math.min((now - p.detachAnimStart) / Scene.PARTICLE_DETACH_DURATION, 1);
               const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
               const easedT = easeOutCubic(t);
-              let colorAnim = interpolateHSL(new THREE.Color(1, 1, 1), targetColor, easedT);
+              let colorAnim = interpolateHSL(baseColor, targetColor, easedT);
               mesh.setColorAt(idx, colorAnim);
             } else {
               mesh.setColorAt(idx, targetColor);
             }
           } else {
-            mesh.setColorAt(idx, new THREE.Color(1, 1, 1));
+            mesh.setColorAt(idx, baseColor);
           }
           instanceIndices[p.meshIdx]++;
           if (t >= 1) {
@@ -766,21 +781,21 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
             matrix.makeRotationFromEuler(new THREE.Euler(rot.x, rot.y, rot.z));
             matrix.setPosition(x, y, z);
             mesh.setMatrixAt(idx, matrix);
-            // Animate color for detached particles (HSB/HSL interpolation)
+            // Animate color for detached particles (HSL interpolation)
             if (p.isDetached) {
               let isActiveLevel = (p.detachmentStep === this.currentLevel);
-              let targetColor = isActiveLevel ? new THREE.Color(0xFFD000) : new THREE.Color(1, 1, 1);
+              let targetColor = isActiveLevel ? yellowColor : baseColor;
               if (p.animationState === 'detaching') {
                 const t = Math.min((now - p.detachAnimStart) / Scene.PARTICLE_DETACH_DURATION, 1);
                 const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
                 const easedT = easeOutCubic(t);
-                let colorAnim = interpolateHSL(new THREE.Color(1, 1, 1), targetColor, easedT);
+                let colorAnim = interpolateHSL(baseColor, targetColor, easedT);
                 mesh.setColorAt(idx, colorAnim);
               } else {
                 mesh.setColorAt(idx, targetColor);
               }
             } else {
-              mesh.setColorAt(idx, new THREE.Color(1, 1, 1));
+              mesh.setColorAt(idx, baseColor);
             }
             instanceIndices[p.meshIdx]++;
             if (t >= 1) {
@@ -818,21 +833,13 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
             matrix.makeRotationFromEuler(new THREE.Euler(rot.x, rot.y, rot.z));
             matrix.setPosition(x, y, z);
             mesh.setMatrixAt(idx, matrix);
-            // Animate color for detached particles (HSB/HSL interpolation)
+            // Animate color for detached particles (HSL interpolation)
             if (p.isDetached) {
               let isActiveLevel = (p.detachmentStep === this.currentLevel);
-              let targetColor = isActiveLevel ? new THREE.Color(0xFFD000) : new THREE.Color(1, 1, 1);
-              if (p.animationState === 'detaching') {
-                const t = Math.min((now - p.detachAnimStart) / Scene.PARTICLE_DETACH_DURATION, 1);
-                const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
-                const easedT = easeOutCubic(t);
-                let colorAnim = interpolateHSL(new THREE.Color(1, 1, 1), targetColor, easedT);
-                mesh.setColorAt(idx, colorAnim);
-              } else {
-                mesh.setColorAt(idx, targetColor);
-              }
+              let targetColor = isActiveLevel ? yellowColor : baseColor;
+              mesh.setColorAt(idx, targetColor);
             } else {
-              mesh.setColorAt(idx, new THREE.Color(1, 1, 1));
+              mesh.setColorAt(idx, baseColor);
             }
             instanceIndices[p.meshIdx]++;
           }
@@ -844,26 +851,12 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
           matrix.makeRotationFromEuler(new THREE.Euler(rot.x, rot.y, rot.z));
           matrix.setPosition(x, y, z);
           mesh.setMatrixAt(idx, matrix);
-            // Animate color for detached particles
-            if (p.isDetached) {
-              let isActiveLevel = (p.detachmentStep === this.currentLevel);
-              let targetColor = isActiveLevel ? new THREE.Color(0xFFD000) : new THREE.Color(1, 1, 1);
-              if (p.animationState === 'detaching') {
-                const t = Math.min((now - p.detachAnimStart) / Scene.PARTICLE_DETACH_DURATION, 1);
-                const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
-                const easedT = easeOutCubic(t);
-                let colorAnim = new THREE.Color(1, 1, 1).lerp(targetColor, easedT);
-                mesh.setColorAt(idx, colorAnim);
-              } else {
-                mesh.setColorAt(idx, targetColor);
-              }
-            } else {
-              mesh.setColorAt(idx, new THREE.Color(1, 1, 1));
-            }
+          // Animate color for attached particles
+          mesh.setColorAt(idx, baseColor);
           instanceIndices[p.meshIdx]++;
         }
       }
-      for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
+      for (let shape = 0; shape < meshShapeCount; shape++) {
         this._particleMeshes[shape].instanceMatrix.needsUpdate = true;
         if (this._particleMeshes[shape].instanceColor) this._particleMeshes[shape].instanceColor.needsUpdate = true;
       }
@@ -985,6 +978,7 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
       this._initDetachmentIndices();
     }
     await this.animateDetachAndZoomDeterministic(0, this.timeline.length > 0 ? (this.timeline[0].items_consumed / this.totalItems) : 0);
+    window.playClickSoundTwo(); 
     this.currentLevel = 0;
     this.updateTimelineOverlay(0);
     // Fade in overlay for level 0
@@ -1220,14 +1214,12 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
             matrix.setPosition(x, y, z);
             mesh.setMatrixAt(meshIdx, matrix);
             // Fade color to white
+            // Retain original color (no fade to white)
             const cidx = i * 3;
             const r0 = startColors[cidx + 0] !== undefined ? startColors[cidx + 0] : 1.0;
             const g0 = startColors[cidx + 1] !== undefined ? startColors[cidx + 1] : 1.0;
             const b0 = startColors[cidx + 2] !== undefined ? startColors[cidx + 2] : 1.0;
-            const r = r0 + (1.0 - r0) * t;
-            const g = g0 + (1.0 - g0) * t;
-            const b = b0 + (1.0 - b0) * t;
-            if (mesh.instanceColor) mesh.setColorAt(meshIdx, new THREE.Color(r, g, b));
+            if (mesh.instanceColor) mesh.setColorAt(meshIdx, new THREE.Color(r0, g0, b0));
           }
           for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
             this._particleMeshes[shape].instanceMatrix.needsUpdate = true;
@@ -1309,6 +1301,7 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
     // console.log('[gotoTimelineStep] Set _cameraAnim:', JSON.stringify(this._cameraAnim));
     await this.animateDetachAndZoomDeterministic(prevPercent, percent);
     this.currentLevel = level;
+    if (window.playClickSoundTwo) window.playClickSoundTwo();
     this.updateTimelineOverlay(level);
     if (timelineOverlay) {
       this._showOverlay(timelineOverlay, { display: '', duration: 700 });

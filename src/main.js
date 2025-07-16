@@ -26,8 +26,8 @@ window.addEventListener('orientationchange', () => {
 let audioCtx, noiseSource, filter, gainNode;
 let started = false;
 const DEFAULT_AMBIENT_VOLUME = 0.08;
-const BASE_FREQ = 320;
-const MOD_DEPTH = 180; // Hz, how much the frequency oscillates
+const BASE_FREQ = 240;
+const MOD_DEPTH = 10; // Hz, how much the frequency oscillates
 const MOD_RATE = 0.07; // Hz, how fast the oscillation is (0.07Hz = ~14s per cycle)
 let freqModActive = false;
 let freqModPhase = 0;
@@ -210,7 +210,8 @@ window.playClickSound = function() {
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.type = 'sine';
-  osc.frequency.value = 1230;
+  osc.frequency.value = 420;
+
   gain.gain.value = 0.12;
   osc.connect(gain);
   gain.connect(ctx.destination);
@@ -227,30 +228,23 @@ window.playClickSound = function() {
 window.playClickSoundTwo = function() {
   if (!soundOn) return;
   if (!audioCtx) return;
-
-  function playOnce(delay = 0) {
-    const ctx = audioCtx;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = 430;
-    gain.gain.value = 0.12;
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    const now = ctx.currentTime + delay;
-    gain.gain.setValueAtTime(0.12, now);
-    gain.gain.linearRampToValueAtTime(0, now + 0.15);
-    osc.start(now);
-    osc.stop(now + 0.15 + delay);
-    osc.onended = () => {
-      osc.disconnect();
-      gain.disconnect();
-    };
-  }
-
-    playOnce(0.1); 
-  playOnce(0.2); 
-     // Play again after 120ms
+  const ctx = audioCtx;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.value = 130;
+  gain.gain.value = 0.12;
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  const now = ctx.currentTime;
+  gain.gain.setValueAtTime(0.12, now);
+  gain.gain.linearRampToValueAtTime(0, now + 1); // Fade out over 1 second
+  osc.start(now);
+  osc.stop(now + 1); // Stop after 1 second
+  osc.onended = () => {
+    osc.disconnect();
+    gain.disconnect();
+  };
 };
 // --- Typewriter animation cancellation logic ---
 window._typewriterToken = 0;
@@ -351,7 +345,7 @@ window.updateTimelineOverlay = function({ year, event, species, contaminationRat
     if (window._timelineAnimToken !== myToken) return;
     statMain.style.transition = 'opacity 0.5s';
     statMain.style.opacity = 1;
-    if (window.playClickSound) window.playClickSound();
+    //if (window.playClickSound) window.playClickSound();
     let animStart = null;
     let animDuration = 1200;
     function animateCount(ts) {
@@ -380,7 +374,8 @@ window.updateTimelineOverlay = function({ year, event, species, contaminationRat
           if (yearIdx === 0) {
             yearEl.style.visibility = 'visible';
             if (window.playClickSound) {
-              addTimeout(() => { if (window._typewriterToken === yearTypeToken && window._timelineAnimToken === myToken) window.playClickSoundTwo(); }, 80);
+              // item name sound
+           window.playClickSound();
             }
           }
           if (yearIdx < yearStr.length) {
@@ -390,7 +385,8 @@ window.updateTimelineOverlay = function({ year, event, species, contaminationRat
             // After year typewriter, play click sound and start description typewriter
             addTimeout(() => {
               if (window._timelineAnimToken !== myToken) return;
-              window.playClickSound();
+             //beep
+              // window.playClickSound();
             }, 80);
             // 3. Typewriter description
             statSublabel.style.transition = '';
@@ -416,7 +412,8 @@ window.updateTimelineOverlay = function({ year, event, species, contaminationRat
             function typeWriter() {
               if (window._typewriterToken !== typeToken || window._timelineAnimToken !== myToken) return;
               if (i === 0 && window.playClickSound) {
-                addTimeout(() => { if (window._typewriterToken === typeToken && window._timelineAnimToken === myToken) window.playClickSoundTwo(); }, 80);
+                //third sound
+                window.playClickSound();
               }
               statSublabel.innerHTML = sublabelHTML + sublabelText.slice(0, i);
               if (i <= sublabelText.length) {
