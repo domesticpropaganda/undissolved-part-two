@@ -3,36 +3,36 @@
     "garment": "Sneakers",
     "mesh": "sneaks.glb",
     "items_consumed": 120,
-    "description": "<span class=\"highlight\">Often replaced</span> due to wear, trend shifts, or sports use. <span class=\"highlight\">Made from</span> synthetic rubber, EVA foam, and plastic textiles. <span class=\"highlight\">Difficult to recycle</span> with components that resist breakdown for decades to centuries."
+    "description": "<span class=\"highlight\">Often replaced</span> due to wear, trend shifts, or sports use. <span class=\"highlight\">Commonly made from</span> synthetic rubber, EVA foam, and plastic textiles. <span class=\"highlight\">Difficult to recycle</span> with components that resist breakdown for decades to centuries."
   },
   {
     "garment": "Jeans",
     "mesh": "pants.glb",
     "items_consumed": 200,
-    "description": "<span class=\"highlight\">Discarded</span> due to fit changes or fashion cycles. <span class=\"highlight\">Made from</span> cotton blends with elastane and chemically treated finishes. <span class=\"highlight\">Recycling is energy-intensive</span> synthetic additives hinder biodegradability."
+    "description": "<span class=\"highlight\">Discarded</span> due to fit changes or fashion cycles. <span class=\"highlight\">Usually made from</span> cotton blends with elastane and chemically treated finishes. <span class=\"highlight\">Recycling is energy-intensive</span> synthetic additives hinder biodegradability."
   },
   {
     "garment": "Shirts",
     "mesh": "shirt.glb",
     "items_consumed": 280,
-    "description": "Frequently replaced for variety or during sales. Often made of cotton-polyester blends and dyed synthetics. Difficult to separate fibers; dyes persist in the environment."
+    "description": "<span class=\"highlight\">Frequently replaced </span>for variety or during sales. <span class=\"highlight\">Often made of</span> cotton-polyester blends and dyed synthetics. <span class=\"highlight\">Difficult to separate fibers</span>, dyes persist in the environment."
   },
   {
-    "garment": "Sweats & Hoodies",
+    "garment": "Sweaters",
     "mesh": "sweat.glb",
     "items_consumed": 340,
-    "description": "Replaced before worn out due to branding, fading, or trend turnover. Made from polyester or cotton-poly blends with printed graphics. Releases microplastics when washed and is rarely recycled."
+    "description": "<span class=\"highlight\">Replaced</span> before worn out due to branding, fading, or trend turnover. <span class=\"highlight\">Generally made from</span> polyester or cotton-poly blends with printed graphics. <span class=\"highlight\">Releases microplastics</span> when washed and is rarely recycled."
   },
   {
     "garment": "Socks",
     "mesh": "socks.glb",
     "items_consumed": 400,
-    "description": "Discarded due to wear or loss. Typically composed of polyester, nylon, and elastic fibers. Too small and blended for recycling; shed microfibers with each wash."
+    "description": "<span class=\"highlight\">Discarded</span> due to wear or loss. <span class=\"highlight\">Often made of</span> polyester, nylon, and elastic fibers.<span class=\"highlight\"> Too small and blended</span> for recycling; shed microfibers with each wash."
   },
   {
     "garment": "T-shirts",
     "mesh": "tee.glb",
     "items_consumed": 850,
-    "description": "Mass-produced and often unworn or short-lived. Commonly made of polyester or cotton-polyester blends. Major contributor to microplastic pollution and persistent landfill waste."
+    "description": "<span class=\"highlight\">Discarded often</span> brand new or barely-worn. <span class=\"highlight\">Commonly made of</span> polyester or cotton-polyester blends. <span class=\"highlight\">Major contributor</span> to microplastic pollution and persistent landfill waste."
   }
 ]
