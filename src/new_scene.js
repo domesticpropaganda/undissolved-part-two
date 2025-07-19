@@ -2,6 +2,19 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 export class Scene {
+  // Helper: interpolate between two colors in HSL space
+  // Used for smooth color transitions (detachment/reattachment)
+  static interpolateHSL(colorA, colorB, t) {
+    const hslA = {};
+    colorA.getHSL(hslA);
+    const hslB = {};
+    colorB.getHSL(hslB);
+    // Interpolate each channel
+    const h = hslA.h + (hslB.h - hslA.h) * t;
+    const s = hslA.s + (hslB.s - hslA.s) * t;
+    const l = hslA.l + (hslB.l - hslA.l) * t;
+    return new THREE.Color().setHSL(h, s, l);
+  }
   // ---- Centralized Constants ----
   static PARTICLE_SHAPE_COUNT = 5; // Number of mesh shapes (now matches mesh files)
   static PARTICLE_TARGET_SIZE = 0.09;
@@ -653,28 +666,18 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
       for (let i = 0; i < this.particles.length; i++) shapeCounts[this.particles[i].meshIdx]++;
       const instanceIndices = Array(meshShapeCount).fill(0);
       // --- HSB/HSL color transitions for detachment/reattachment ---
-      // Helper: interpolate HSL, but keep saturation and lightness high as you approach yellow
-      function interpolateHSL(colorA, colorB, t) {
-        // Clamp hue to yellow, only interpolate saturation and lightness
-        const hslA = {};
-        colorA.getHSL(hslA);
-        const hslB = {};
-        colorB.getHSL(hslB);
-        // Use yellow's hue for the whole transition
-        const yellowHue = hslB.h;
-        // Interpolate saturation and lightness only
+      // Helper: interpolate color for yellow to grey (baseColor) using RGB, not HSL
+      function interpolateColorRGB(colorA, colorB, t) {
+        // Use ease for smoothness
         const easeOut = t => 1 - Math.pow(1 - t, 2);
-        const s = hslA.s + (hslB.s - hslA.s) * easeOut(t);
-        const l = hslA.l + (hslB.l - hslA.l) * easeOut(t);
-        // Clamp saturation/lightness to minimums for vivid yellow
-        const vividYellowMinS = 0.85;
-        const vividYellowMinL = 0.5;
-        const sFinal = t > 0.7 ? Math.max(s, vividYellowMinS) : s;
-        const lFinal = t > 0.7 ? Math.max(l, vividYellowMinL) : l;
-        const out = new THREE.Color();
-        out.setHSL(yellowHue, sFinal, lFinal);
-        return out;
+        t = easeOut(t);
+        const r = colorA.r + (colorB.r - colorA.r) * t;
+        const g = colorA.g + (colorB.g - colorA.g) * t;
+        const b = colorA.b + (colorB.b - colorA.b) * t;
+        return new THREE.Color(r, g, b);
       }
+      // Use static helper for HSL interpolation
+      const interpolateHSL = Scene.interpolateHSL;
 
       // Detach and animate particles, and handle reattachment
       for (let i = 0; i < this.particles.length; i++) {
@@ -725,7 +728,8 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
         let matrix = new THREE.Matrix4();
         // Always use static color (base)
         const baseColor = new THREE.Color(0x6B707B); // #535760ff
-        const yellowColor = new THREE.Color(0xFFD000); // #FFD000
+        const yellowColor = new THREE.Color(0xFFBF00); // #ffbf00ff
+        // Remove greenColor, use baseColor for reattachment target
         if (p.animationState === 'reattaching') {
           if (!p.reattachAnimStart) p.reattachAnimStart = now;
           const t = Math.min((now - p.reattachAnimStart) / Scene.PARTICLE_REATTACH_DURATION, 1);
@@ -740,22 +744,9 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
           matrix.makeRotationFromEuler(new THREE.Euler(rot.x, rot.y, rot.z));
           matrix.setPosition(x, y, z);
           mesh.setMatrixAt(idx, matrix);
-          // Animate color for detached particles (HSL interpolation)
-          if (p.isDetached) {
-            let isActiveLevel = (p.detachmentStep === this.currentLevel);
-            let targetColor = isActiveLevel ? yellowColor : baseColor;
-            if (p.animationState === 'detaching') {
-              const t = Math.min((now - p.detachAnimStart) / Scene.PARTICLE_DETACH_DURATION, 1);
-              const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
-              const easedT = easeOutCubic(t);
-              let colorAnim = interpolateHSL(baseColor, targetColor, easedT);
-              mesh.setColorAt(idx, colorAnim);
-            } else {
-              mesh.setColorAt(idx, targetColor);
-            }
-          } else {
-            mesh.setColorAt(idx, baseColor);
-          }
+          // Gradually fade from yellow to grey during reattachment (use RGB interpolation)
+          let colorAnim = interpolateColorRGB(yellowColor, baseColor, easedT);
+          mesh.setColorAt(idx, colorAnim);
           instanceIndices[p.meshIdx]++;
           if (t >= 1) {
             p.isDetached = false;
@@ -789,7 +780,8 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
                 const t = Math.min((now - p.detachAnimStart) / Scene.PARTICLE_DETACH_DURATION, 1);
                 const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
                 const easedT = easeOutCubic(t);
-                let colorAnim = interpolateHSL(baseColor, targetColor, easedT);
+                // Use RGB interpolation to avoid green
+                let colorAnim = interpolateColorRGB(baseColor, targetColor, easedT);
                 mesh.setColorAt(idx, colorAnim);
               } else {
                 mesh.setColorAt(idx, targetColor);
@@ -952,6 +944,7 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
     window.removeEventListener('wheel', this._handleFadeOutIntro);
     this.isAnimating = true;
     this._introDone = true;
+    this._introFaded = true; // Ensure navigation unlocks after intro fades
     // --- Camera animation for intro to level 1 ---
     const min = this._baseCameraPos || { x: 2, y: 2, z: 2 };
     const max = { x: min.x + 2.5, y: min.y + 2.5, z: min.z + 2.5 };
@@ -973,12 +966,12 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
       await this._fadeOverlay(introOverlay, { opacity: '0', display: 'none', duration: 700 });
     }
     // Animate level 0: particles detach from human and move out
-    // Ensure detachment indices are initialized (normally done in gotoTimelineStep)
-    if (!this._detachmentIndices) {
+    // Ensure detachment indices are initialized and correct before detachment logic
+    if (!this._detachmentIndices || !Array.isArray(this._detachmentIndices) || this._detachmentIndices.length !== this._instancedParticleCount) {
       this._initDetachmentIndices();
     }
     await this.animateDetachAndZoomDeterministic(0, this.timeline.length > 0 ? (this.timeline[0].items_consumed / this.totalItems) : 0);
-    window.playClickSoundTwo(); 
+    if (window.playClickSoundTwo) window.playClickSoundTwo();
     this.currentLevel = 0;
     this.updateTimelineOverlay(0);
     // Fade in overlay for level 0
@@ -1143,7 +1136,7 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
       await this._fadeOverlay(timelineOverlay, { opacity: '0', display: undefined, duration: 700 });
     }
     // --- Deterministic detachment indices for each step ---
-    if (!this._detachmentIndices) {
+    if (!this._detachmentIndices || !Array.isArray(this._detachmentIndices) || this._detachmentIndices.length !== this._instancedParticleCount) {
       this._initDetachmentIndices();
     }
     // Handle return to intro overlay state
@@ -1191,35 +1184,44 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
         duration: 900,
         active: true
       };
-      // Animate particles and fade colors to white in lockstep (camera handled by main loop)
+      // Animate particles and fade colors from yellow to grey (reattachment) in lockstep
       const duration = 1200;
       const startTime = performance.now();
       await new Promise(resolve => {
         const animate = () => {
           const elapsed = performance.now() - startTime;
           const t = Math.min(elapsed / duration, 1);
+          // Use cubic ease for smoothness
+          const easeInOutCubic = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+          const easedT = easeInOutCubic(t);
+          const baseColor = new THREE.Color(0x6B707B); // grey
+          const yellowColor = new THREE.Color(0xFFD000); // yellow
           for (let i = 0; i < count; i++) {
             const idx = i * 3;
             const shape = this._particleShapeIndices[i];
             const mesh = this._particleMeshes[shape];
             const meshIdx = this._particleInstanceMap[shape].indexOf(i);
             // Interpolate position
-            const x = start[idx] + (end[idx] - start[idx]) * t;
-            const y = start[idx+1] + (end[idx+1] - start[idx+1]) * t;
-            const z = start[idx+2] + (end[idx+2] - start[idx+2]) * t;
+            const x = start[idx] + (end[idx] - start[idx]) * easedT;
+            const y = start[idx+1] + (end[idx+1] - start[idx+1]) * easedT;
+            const z = start[idx+2] + (end[idx+2] - start[idx+2]) * easedT;
             // Apply initial rotation
             const rot = this.particles[i]?.initialRotation || { x: 0, y: 0, z: 0 };
             const matrix = new THREE.Matrix4();
             matrix.makeRotationFromEuler(new THREE.Euler(rot.x, rot.y, rot.z));
             matrix.setPosition(x, y, z);
             mesh.setMatrixAt(meshIdx, matrix);
-            // Fade color to white
-            // Retain original color (no fade to white)
-            const cidx = i * 3;
-            const r0 = startColors[cidx + 0] !== undefined ? startColors[cidx + 0] : 1.0;
-            const g0 = startColors[cidx + 1] !== undefined ? startColors[cidx + 1] : 1.0;
-            const b0 = startColors[cidx + 2] !== undefined ? startColors[cidx + 2] : 1.0;
-            if (mesh.instanceColor) mesh.setColorAt(meshIdx, new THREE.Color(r0, g0, b0));
+            // Fade color from yellow to grey for reattaching particles, else keep base color
+            let colorAnim = baseColor;
+            // If particle was detached at level 1, fade from yellow to grey
+            if (this.particles[i]?.isDetached || this.particles[i]?.animationState === 'reattaching') {
+              colorAnim = new THREE.Color(
+                yellowColor.r + (baseColor.r - yellowColor.r) * easedT,
+                yellowColor.g + (baseColor.g - yellowColor.g) * easedT,
+                yellowColor.b + (baseColor.b - yellowColor.b) * easedT
+              );
+            }
+            if (mesh.instanceColor) mesh.setColorAt(meshIdx, colorAnim);
           }
           for (let shape = 0; shape < Scene.PARTICLE_SHAPE_COUNT; shape++) {
             this._particleMeshes[shape].instanceMatrix.needsUpdate = true;
@@ -1286,7 +1288,7 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
     }
     // Camera zoom logic: always animate from prevPercent to percent (forward or backward)
     const min = this._baseCameraPos || { x: 2, y: 2, z: 2 };
-    const max = { x: min.x + 2.5, y: min.y + 2.5, z: min.z + 2.5 };
+    const max = { x: min.x + 2.75, y: min.y + 2.75, z: min.z + 2.75 };
     const startPos = {
       x: min.x + (max.x - min.x) * prevPercent,
       y: min.y + (max.y - min.y) * prevPercent,
@@ -1339,7 +1341,8 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
         }, 300);
       }, 700);
     }
-    this.isAnimating = false;
+    this.isAnimating = false; // Always unlock navigation after step
+    this._introFaded = true;
   }
 
   // Animate detachment/reattachment and camera zoom for timeline step (deterministic indices)

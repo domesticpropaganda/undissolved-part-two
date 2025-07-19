@@ -3,36 +3,36 @@
     "garment": "Sneakers",
     "mesh": "sneaks.glb",
     "items_consumed": 120,
-    "description": "Festival pairs, gym rotations, lifestyle kicks. Designed for performance, discarded for fashion.<br><br><span class=\"highlight\">POTENTIAL WASTE:</span> Glued synthetics and rubber soles resist recycling. Decomposition may take centuries."
+    "description": "<span class=\"highlight\">Often replaced</span> due to wear, trend shifts, or sports use. <span class=\"highlight\">Made from</span> synthetic rubber, EVA foam, and plastic textiles. <span class=\"highlight\">Difficult to recycle</span> with components that resist breakdown for decades to centuries."
   },
   {
     "garment": "Jeans",
     "mesh": "pants.glb",
     "items_consumed": 200,
-    "description": "Trend pieces, seasonal layers, and untouched occasionwear. Discarded not because they broke \u2014 but because they no longer fit a mood or moment.<br><br><span class=\"highlight\">POTENTIAL WASTE:</span> Heavy denim with elastane or chemical distressing makes recycling energy-intensive."
+    "description": "<span class=\"highlight\">Discarded</span> due to fit changes or fashion cycles. <span class=\"highlight\">Made from</span> cotton blends with elastane and chemically treated finishes. <span class=\"highlight\">Recycling is energy-intensive</span> synthetic additives hinder biodegradability."
   },
   {
     "garment": "Shirts",
     "mesh": "shirt.glb",
     "items_consumed": 280,
-    "description": "Duplicates, misfits, and sale grabs \u2014 piling up faster than they\u2019re worn. Styles change, habits don\u2019t. Closets fill, landfills follow.<br><br><span class=\"highlight\">POTENTIAL WASTE:</span> Cotton-synthetic blends resist decomposition and retain dyes and finishes for decades."
+    "description": "Frequently replaced for variety or during sales. Often made of cotton-polyester blends and dyed synthetics. Difficult to separate fibers; dyes persist in the environment."
   },
   {
     "garment": "Sweats & Hoodies",
     "mesh": "sweat.glb",
     "items_consumed": 340,
-    "description": "Bought for comfort, replaced for novelty. Faded prints, cracked logos, seasonal collabs \u2014 worn until the next one drops.<br><br><span class=\"highlight\">POTENTIAL WASTE:</span> Polyester blends and graphic inks shed microfibers and clog recycling systems."
+    "description": "Replaced before worn out due to branding, fading, or trend turnover. Made from polyester or cotton-poly blends with printed graphics. Releases microplastics when washed and is rarely recycled."
   },
   {
     "garment": "Socks",
     "mesh": "socks.glb",
     "items_consumed": 400,
-    "description": "Bought in packs, lost in pairs. Few repaired, most replaced. Their size hides the scale.<br><br><span class=\"highlight\">POTENTIAL WASTE:</span> Frequent laundering releases dense microfibers. Elastic blends make recycling nearly impossible."
+    "description": "Discarded due to wear or loss. Typically composed of polyester, nylon, and elastic fibers. Too small and blended for recycling; shed microfibers with each wash."
   },
   {
     "garment": "T-shirts",
     "mesh": "tee.glb",
     "items_consumed": 850,
-    "description": "Bought in bulk, gifted at events, picked up on impulse. Worn a few times, if at all \u2014 some never leave the drawer.<br><br><span class=\"highlight\">POTENTIAL WASTE:</span> Mostly polyester blends, they release microplastics in every wash and degrade into long-lived landfill waste."
+    "description": "Mass-produced and often unworn or short-lived. Commonly made of polyester or cotton-polyester blends. Major contributor to microplastic pollution and persistent landfill waste."
   }
 ]
