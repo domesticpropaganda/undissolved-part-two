@@ -1,6 +1,5 @@
-# UNDISSOLVED — Snapshots of a fast-fashion life
-
-**UNDISSOLVED** is an interactive data visualization exploring fast fashion consumption through the lens of particle-based 3D storytelling. This segment of the project visualizes the average number of garments a person discards over a lifetime, using 3D meshes, particle transitions, and contextual overlays.
+# UNFASHIONED — A Lifetime of Discarded Purchases
+**UNFASHIONED** is an interactive data visualization exploring fast fashion consumption through the lens of particle-based 3D storytelling. This segment of the project visualizes the average number of garments a person discards over a lifetime, using 3D meshes, particle transitions, and contextual overlays.
 
 ---
 

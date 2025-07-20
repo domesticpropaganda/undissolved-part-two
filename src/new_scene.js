@@ -1008,8 +1008,14 @@ this.renderer.setClearColor(0x393D45, 1); // for black, or use any color you wan
     // Helper: go to timeline step by offset
     this._gotoTimelineStepOffset = (dir) => {
       if (this.isAnimating) return;
+      // Enable navigation during intro: allow dir > 0 to progress from intro
+      if (!this._introFaded && dir > 0) {
+        // Progress from intro to level 0
+        this.handleFadeOutIntro();
+        return;
+      }
+      // Prevent backward navigation before intro is faded
       if (!this._introFaded && dir < 0) return;
-      if (!this._introFaded && dir > 0) return; // Only allow intro sequence
       this.gotoTimelineStep(this.currentLevel + dir);
     };
     // Wheel event (trackpad/touchpad/mouse)
